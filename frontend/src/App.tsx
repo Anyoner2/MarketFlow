@@ -12,12 +12,12 @@ type Product = {
 }
 
 const previewProducts: Product[] = [
-  { id: 1, name: 'Everyday Ceramic Set', category: 'Home', price: '42.00', description: 'Hand-finished stoneware for the slow mornings.', image: 'photo-1610701596007-11502861dcfa', badge: 'Bestseller' },
-  { id: 2, name: 'Market Tote No. 04', category: 'Accessories', price: '28.00', description: 'A sturdy carryall made for the long way home.', image: 'photo-1590874103328-eac38a683ce7' },
-  { id: 3, name: 'Botanical Study Print', category: 'Art', price: '36.00', description: 'Archival ink on softly textured cotton paper.', image: 'photo-1579783902614-a3fb3927b6a5', badge: 'Small batch' },
-  { id: 4, name: 'Form Candle, No. 2', category: 'Home', price: '24.00', description: 'Cedar, fig leaf, and a little room to breathe.', image: 'photo-1603006905003-be475563bc59' },
-  { id: 5, name: 'Ridge Glass Carafe', category: 'Home', price: '48.00', description: 'Recycled glass with a satisfying, weighty feel.', image: 'photo-1514228742587-6b1558fcca3d' },
-  { id: 6, name: 'Softline Scarf', category: 'Accessories', price: '58.00', description: 'Light merino, woven close and finished by hand.', image: 'photo-1601924994987-69e26d50dc26' },
+  { id: 1, name: 'Everyday Ceramic Set', category: 'Home', price: '5400', description: 'Hand-finished stoneware for the slow mornings.', image: 'photo-1610701596007-11502861dcfa', badge: 'Bestseller' },
+  { id: 2, name: 'Market Tote No. 04', category: 'Accessories', price: '3600', description: 'A sturdy carryall made for the long way home.', image: 'photo-1590874103328-eac38a683ce7' },
+  { id: 3, name: 'Botanical Study Print', category: 'Art', price: '4700', description: 'Archival ink on softly textured cotton paper.', image: 'photo-1579783902614-a3fb3927b6a5', badge: 'Small batch' },
+  { id: 4, name: 'Form Candle, No. 2', category: 'Home', price: '3100', description: 'Cedar, fig leaf, and a little room to breathe.', image: 'photo-1603006905003-be475563bc59' },
+  { id: 5, name: 'Ridge Glass Carafe', category: 'Home', price: '6200', description: 'Recycled glass with a satisfying, weighty feel.', image: 'photo-1514228742587-6b1558fcca3d' },
+  { id: 6, name: 'Softline Scarf', category: 'Accessories', price: '7500', description: 'Light merino, woven close and finished by hand.', image: 'photo-1601924994987-69e26d50dc26' },
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
@@ -83,7 +83,7 @@ function App() {
 
   return (
     <main>
-      <div className="announcement">Independent makers, good things, delivered. <span>Free shipping over $75</span></div>
+      <div className="announcement">Independent makers, good things, delivered. <span>Free shipping over KSh 10,000</span></div>
       <header className="site-header">
         <a className="wordmark" href="#top" aria-label="MarketFlow home">market<span>flow</span><i>.</i></a>
         <nav className="main-nav" aria-label="Main navigation">
@@ -139,7 +139,7 @@ function App() {
               {product.badge && <span className="product-badge">{product.badge}</span>}
               <button className="add-button" aria-label={`Add ${product.name} to bag`} onClick={() => setCartCount((count) => count + 1)}>+</button>
             </div>
-            <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">${product.price}</span></div>
+            <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
             <p className="product-description">{product.description}</p>
           </article>)}
         </div>

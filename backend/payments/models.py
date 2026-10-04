@@ -10,7 +10,7 @@ class Payment(models.Model):
 
 	order = models.OneToOneField('orders.Order', on_delete=models.PROTECT, related_name='payment')
 	amount = models.DecimalField(max_digits=10, decimal_places=2)
-	currency = models.CharField(max_length=3, default='USD')
+	currency = models.CharField(max_length=3, default='KES')
 	provider = models.CharField(max_length=40, blank=True)
 	provider_reference = models.CharField(max_length=160, blank=True)
 	status = models.CharField(max_length=16, choices=Status.choices, default=Status.PENDING)

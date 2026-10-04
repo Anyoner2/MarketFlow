@@ -52,6 +52,10 @@ Order requests contain product IDs and quantities only. Product availability, pr
 
 The API currently records pending orders; payment capture and fulfillment require a payment provider and shipping workflow to be selected.
 
+## Currency
+
+Catalog prices, new orders, and payments use Kenyan shillings (`KES`). The storefront preview prices were converted from USD at approximately KSh 129.54 per USD (rate checked October 4, 2026) and rounded to the nearest KSh 100. Existing order and payment records keep their originally stored amount and currency.
+
 ## Deploy to Render
 
 The root `render.yaml` defines a Django API, PostgreSQL database, and static Vite storefront. To create the services, connect this GitHub repository in the Render dashboard and create a new Blueprint from the repository. Render will prompt you to review the services and environment before provisioning them.

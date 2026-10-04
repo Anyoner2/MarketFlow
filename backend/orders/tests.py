@@ -24,9 +24,11 @@ class OrderModelTests(TestCase):
 		product.save()
 
 		self.assertEqual(order.total_amount, Decimal('30.00'))
+		self.assertEqual(order.currency, 'KES')
 
 		payment = Payment.objects.create(order=order, amount=order.total_amount)
 		self.assertEqual(order.payment, payment)
+		self.assertEqual(payment.currency, 'KES')
 
 
 class OrderApiTests(APITestCase):
