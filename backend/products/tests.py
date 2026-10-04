@@ -22,3 +22,38 @@ class ProductCatalogApiTests(APITestCase):
 		self.assertEqual(len(response.data), 1)
 		self.assertEqual(response.data[0]['name'], 'Open listing')
 		self.assertEqual(response.data[0]['image'], '')
+
+	def test_seller_can_create_product_in_own_store(self):
+		owner = self.store.owner
+		self.client.force_authenticate(owner)
+
+		response = self.client.post(
+			'/api/seller/products/',
+			{
+				'store_id': self.store.id,
+				'name': 'New listing',
+				'price': '21.00',
+				'stock_quantity': 2,
+			},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, 201)
+		self.assertEqual(Product.objects.get(name='New listing').store, self.store)
+
+	def test_seller_cannot_create_or_manage_products_in_another_store(self):
+		other_owner = User.objects.create_user(username='other-maker', password='A-strong-pass-123')
+		other_store = Store.objects.create(owner=other_owner, name='Other Shop', slug='other-shop')
+		self.client.force_authenticate(self.store.owner)
+
+		response = self.client.post(
+			'/api/seller/products/',
+			{'store_id': other_store.id, 'name': 'Unauthorized', 'price': '9.00'},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, 400)
+		product_id = Product.objects.get(name='Open listing').id
+		self.assertEqual(self.client.patch(f'/api/seller/products/{product_id}/', {'name': 'Changed'}, format='json').status_code, 200)
+		self.client.force_authenticate(other_owner)
+		self.assertEqual(self.client.get(f'/api/seller/products/{product_id}/').status_code, 404)

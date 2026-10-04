@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -10,6 +11,10 @@ class RegistrationSerializer(serializers.Serializer):
     email = serializers.EmailField()
     password = serializers.CharField(write_only=True, min_length=8)
     first_name = serializers.CharField(max_length=150, required=False, allow_blank=True)
+
+    def validate_password(self, value):
+        validate_password(value)
+        return value
 
     def validate_email(self, value):
         normalized_email = value.strip().lower()

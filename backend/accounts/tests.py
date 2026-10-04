@@ -28,6 +28,15 @@ class AuthenticationApiTests(APITestCase):
 
 		self.assertEqual(response.status_code, 400)
 
+	def test_registration_rejects_common_password(self):
+		response = self.client.post(
+			'/api/auth/register/',
+			{'email': 'maker@example.com', 'password': 'password123'},
+			format='json',
+		)
+
+		self.assertEqual(response.status_code, 400)
+
 	def test_login_issues_tokens_for_email_and_password(self):
 		User.objects.create_user(username='maker@example.com', email='maker@example.com', password='A-strong-pass-123')
 
