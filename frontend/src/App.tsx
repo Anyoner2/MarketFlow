@@ -21,6 +21,7 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? ''
 
 function App() {
   const [products, setProducts] = useState<Product[]>(previewProducts)
@@ -33,7 +34,7 @@ function App() {
   const [token, setToken] = useState(() => localStorage.getItem('marketflow_access'))
 
   useEffect(() => {
-    fetch('/api/products/')
+    fetch(`${apiBaseUrl}/api/products/`)
       .then((response) => (response.ok ? response.json() : Promise.reject()))
       .then((data: Product[]) => setProducts(data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image })) : previewProducts))
       .catch(() => setProducts(previewProducts))
@@ -49,7 +50,7 @@ function App() {
     event.preventDefault()
     const formData = new FormData(event.currentTarget)
     const payload = Object.fromEntries(formData.entries())
-    const endpoint = registering ? '/api/auth/register/' : '/api/auth/login/'
+    const endpoint = `${apiBaseUrl}${registering ? '/api/auth/register/' : '/api/auth/login/'}`
     setNotice('')
 
     try {

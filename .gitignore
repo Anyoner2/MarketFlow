@@ -17,6 +17,7 @@ env/
 node_modules/
 dist/
 build/
+staticfiles/
 .vite/
 
 .coverage
