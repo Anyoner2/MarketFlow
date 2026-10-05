@@ -21,7 +21,8 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
-const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? ''
+const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://marketflow.up.railway.app'
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
 
 function App() {
   const [products, setProducts] = useState<Product[]>(previewProducts)
