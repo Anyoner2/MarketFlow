@@ -58,7 +58,7 @@ Catalog prices, new orders, and payments use Kenyan shillings (`KES`). The store
 
 ## Deploy with Railway and Vercel
 
-The recommended alternative deployment is Railway for the Django API and PostgreSQL database, with Vercel hosting the Vite storefront. The existing Render deployment remains configured and is not removed by this setup.
+The recommended deployment is Railway for the Django API and PostgreSQL database, with Vercel hosting the Vite storefront.
 
 ### Railway API and database
 
@@ -83,12 +83,4 @@ CORS_ALLOWED_ORIGINS=https://<your-vercel-project-domain>
 3. Deploy the project. `frontend/vercel.json` provides SPA rewrites so direct navigation works.
 4. Copy the Vercel production domain into Railway's `CORS_ALLOWED_ORIGINS` value and redeploy the API if you change that domain.
 
-After both providers deploy, verify `https://<railway-domain>/api/products/` returns `200` and the Vercel storefront loads its catalog. Keep the Render services until these checks pass; retiring Render is a separate manual action. Railway and Vercel plans, quotas, and database persistence depend on the account plans you select.
-
-## Deploy to Render (existing)
-
-The root `render.yaml` defines a Django API, PostgreSQL database, and static Vite storefront. To create the services, connect this GitHub repository in the Render dashboard and create a new Blueprint from the repository. Render will prompt you to review the services and environment before provisioning them.
-
-The Blueprint uses the free plans by default. Render free web services can spin down when idle, and free PostgreSQL databases are temporary and expire. Do not use this configuration for real customer or order data; choose a paid persistent database and suitable web plans before a production launch.
-
-The API service runs migrations on startup, serves collected static files with WhiteNoise, and gets a generated Django secret. The Blueprint dynamically reads Render's service URLs for `DJANGO_ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, and the frontend's `VITE_API_BASE_URL`. For a paid API plan, move migrations from `startCommand` to Render's `preDeployCommand` to avoid running migrations on every process restart. If you add custom domains, add their host/origin values to the corresponding environment variables and redeploy the frontend after changing `VITE_API_BASE_URL`.
+After both providers deploy, verify `https://<railway-domain>/api/products/` returns `200` and the Vercel storefront loads its catalog. Railway and Vercel plans, quotas, and database persistence depend on the account plans you select.
