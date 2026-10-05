@@ -20,4 +20,4 @@ html { min-width: 320px; scroll-behavior: smooth; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
 button, input { font: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid #bf704e; outline-offset: 3px; }
-::selection { background: #d8ddc5; color: #293c34; }
+::selection { background: #cbd9eb; color: #213f68; }
