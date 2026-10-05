@@ -204,9 +204,9 @@ if not DEBUG:
     SESSION_COOKIE_SECURE = True
     CSRF_COOKIE_SECURE = True
     CSRF_TRUSTED_ORIGINS = [
-        f'https://{host}'
+        f'https://*{host}' if host.startswith('.') else f'https://{host}'
         for host in ALLOWED_HOSTS
-        if host.endswith('.onrender.com')
+        if host.endswith(('.onrender.com', '.up.railway.app'))
     ]
 
 AUTH_USER_MODEL = 'accounts.User'

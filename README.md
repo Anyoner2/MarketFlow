@@ -56,7 +56,36 @@ The API currently records pending orders; payment capture and fulfillment requir
 
 Catalog prices, new orders, and payments use Kenyan shillings (`KES`). The storefront preview prices were converted from USD at approximately KSh 129.54 per USD (rate checked October 4, 2026) and rounded to the nearest KSh 100. Existing order and payment records keep their originally stored amount and currency.
 
-## Deploy to Render
+## Deploy with Railway and Vercel
+
+The recommended alternative deployment is Railway for the Django API and PostgreSQL database, with Vercel hosting the Vite storefront. The existing Render deployment remains configured and is not removed by this setup.
+
+### Railway API and database
+
+1. Create a Railway project from the `Anyoner2/MarketFlow` GitHub repository and add a PostgreSQL service named `Postgres`.
+2. Create or configure the Django service with its root directory set to `/backend` and its Railway config file set to `/backend/railway.json`.
+3. Add these service variables in Railway:
+
+```text
+DJANGO_DEBUG=false
+DJANGO_SECRET_KEY=<generate a unique secret in Railway>
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+DJANGO_ALLOWED_HOSTS=${{RAILWAY_PUBLIC_DOMAIN}}
+CORS_ALLOWED_ORIGINS=https://<your-vercel-project-domain>
+```
+
+4. Generate a public domain for the Railway API service. Migrations run at service startup and static files are served by WhiteNoise.
+
+### Vercel storefront
+
+1. Import the same GitHub repository as a Vercel project and set the project root directory to `frontend` (framework: Vite).
+2. Set `VITE_API_BASE_URL` to the Railway API's public URL, including `https://` and without a trailing slash.
+3. Deploy the project. `frontend/vercel.json` provides SPA rewrites so direct navigation works.
+4. Copy the Vercel production domain into Railway's `CORS_ALLOWED_ORIGINS` value and redeploy the API if you change that domain.
+
+After both providers deploy, verify `https://<railway-domain>/api/products/` returns `200` and the Vercel storefront loads its catalog. Keep the Render services until these checks pass; retiring Render is a separate manual action. Railway and Vercel plans, quotas, and database persistence depend on the account plans you select.
+
+## Deploy to Render (existing)
 
 The root `render.yaml` defines a Django API, PostgreSQL database, and static Vite storefront. To create the services, connect this GitHub repository in the Render dashboard and create a new Blueprint from the repository. Render will prompt you to review the services and environment before provisioning them.
 
