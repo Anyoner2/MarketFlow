@@ -21,7 +21,7 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
-const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://marketflow.up.railway.app'
+const defaultApiBaseUrl = import.meta.env.DEV ? '' : window.location.origin
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
 
 function App() {
@@ -62,7 +62,10 @@ function App() {
       })
       const data = await response.json()
       if (!response.ok) {
-        setNotice(typeof data.detail === 'string' ? data.detail : 'Please check your details and try again.')
+        const messages = Object.values(data)
+          .flatMap((value) => Array.isArray(value) ? value : [value])
+          .filter((value): value is string => typeof value === 'string')
+        setNotice(messages.join(' ') || 'Please check your details and try again.')
         return
       }
       if (data.access) {
