@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import SellerStudio from './SellerStudio'
 
 type Product = {
   id: number
@@ -21,8 +22,15 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
-const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend-git-main-donpapi.vercel.app'
+const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend.vercel.app'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
+
+async function loadCatalog(): Promise<Product[]> {
+  const response = await fetch(`${apiBaseUrl}/api/products/`)
+  if (!response.ok) throw new Error('Catalog unavailable')
+  const data = await response.json() as Product[]
+  return data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image })) : previewProducts
+}
 
 function App() {
   const [products, setProducts] = useState<Product[]>(previewProducts)
@@ -33,12 +41,22 @@ function App() {
   const [registering, setRegistering] = useState(false)
   const [notice, setNotice] = useState('')
   const [token, setToken] = useState(() => localStorage.getItem('marketflow_access'))
+  const [sellerStudioOpen, setSellerStudioOpen] = useState(false)
+
+  async function refreshCatalog() {
+    try {
+      setProducts(await loadCatalog())
+    } catch {
+      setProducts(previewProducts)
+    }
+  }
 
   useEffect(() => {
-    fetch(`${apiBaseUrl}/api/products/`)
-      .then((response) => (response.ok ? response.json() : Promise.reject()))
-      .then((data: Product[]) => setProducts(data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image })) : previewProducts))
-      .catch(() => setProducts(previewProducts))
+    let active = true
+    void loadCatalog()
+      .then((data) => { if (active) setProducts(data) })
+      .catch(() => { if (active) setProducts(previewProducts) })
+    return () => { active = false }
   }, [])
 
   const filteredProducts = products.filter((product) => {
@@ -82,93 +100,104 @@ function App() {
   function signOut() {
     localStorage.removeItem('marketflow_access')
     setToken(null)
+    setSellerStudioOpen(false)
     setNotice('You have signed out.')
   }
 
   return (
-    <main>
-      <div className="announcement">Independent makers, good things, delivered. <span>Free shipping over KSh 10,000</span></div>
-      <header className="site-header">
-        <a className="wordmark" href="#top" aria-label="MarketFlow home">market<span>flow</span><i>.</i></a>
-        <nav className="main-nav" aria-label="Main navigation">
-          <a href="#discover">Discover</a>
-          <a href="#discover" onClick={() => setActiveCategory('Home')}>Home goods</a>
-          <a href="#discover" onClick={() => setActiveCategory('Accessories')}>Accessories</a>
-        </nav>
-        <div className="header-actions">
-          {token ? <button className="text-action" onClick={signOut}>Sign out</button> : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
-          <button className="cart-button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setNotice(cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} in your bag.` : 'Your bag is empty for now.')}>
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
-            <span>Bag <b>{cartCount}</b></span>
-          </button>
-        </div>
-      </header>
-
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow">THE GOOD-FIND MARKET</p>
-          <h1>Keep good<br />things <em>close.</em></h1>
-          <p className="hero-description">A considered collection from independent makers. Useful things, made with care, that feel right at home.</p>
-          <a className="dark-button" href="#discover">Explore the market <span aria-hidden="true">↘</span></a>
-          <div className="hero-note"><span className="note-dot" /> Made slowly. Chosen thoughtfully.</div>
-        </div>
-        <div className="hero-image" role="img" aria-label="Handmade ceramics arranged on a warm studio table">
-          <div className="image-caption"><span>OBJECTS FOR EVERYDAY RITUALS</span><span>01 / 04</span></div>
-        </div>
-        <div className="hero-index">MF—001</div>
-      </section>
-
-      <section className="maker-strip" aria-label="Market values">
-        <span>INDEPENDENT BY NATURE</span><i />
-        <span>BUILT TO BE KEPT</span><i />
-        <span>GOOD PEOPLE, GOOD GOODS</span><i />
-        <span>SMALL BATCH ALWAYS</span>
-      </section>
-
-      <section className="market-section" id="discover">
-        <div className="section-heading">
-          <div><p className="eyebrow">A FEW THINGS WE LOVE</p><h2>The market <span>edit</span></h2></div>
-          <p className="section-aside">Every piece has a person<br />and a point of view behind it.</p>
-        </div>
-        <div className="market-controls">
-          <div className="category-tabs" role="tablist" aria-label="Product categories">
-            {categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? 'active' : ''} onClick={() => setActiveCategory(category)}>{category}</button>)}
+      <main>
+        <div className="announcement">Independent makers, good things, delivered. <span>Free shipping over KSh 10,000</span></div>
+        <header className="site-header">
+          <a className="wordmark" href="#top" aria-label="MarketFlow home">market<span>flow</span><i>.</i></a>
+          <nav className="main-nav" aria-label="Main navigation">
+            <a href="#discover">Discover</a>
+            <a href="#discover" onClick={() => setActiveCategory('Home')}>Home goods</a>
+            <a href="#discover" onClick={() => setActiveCategory('Accessories')}>Accessories</a>
+          </nav>
+          <div className="header-actions">
+            {token ? <>
+              <button className="text-action" onClick={() => setSellerStudioOpen(true)}>Seller studio</button>
+              <button className="text-action" onClick={signOut}>Sign out</button>
+            </> : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
+            <button className="cart-button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setNotice(cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} in your bag.` : 'Your bag is empty for now.')}>
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
+              <span>Bag <b>{cartCount}</b></span>
+            </button>
           </div>
-          <label className="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find something" aria-label="Search products" /></label>
-        </div>
-        <div className="product-grid">
-          {filteredProducts.map((product, index) => <article className="product" key={product.id} style={{ animationDelay: `${index * 70}ms` }}>
-            <div className="product-image-wrap">
-              <img src={product.image.startsWith('http') ? product.image : `https://images.unsplash.com/${product.image}?auto=format&fit=crop&w=900&q=85`} alt={product.name} />
-              {product.badge && <span className="product-badge">{product.badge}</span>}
-              <button className="add-button" aria-label={`Add ${product.name} to bag`} onClick={() => setCartCount((count) => count + 1)}>+</button>
-            </div>
-            <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
-            <p className="product-description">{product.description}</p>
-          </article>)}
-        </div>
-        {filteredProducts.length === 0 && <p className="empty-state">No finds match that search. Try another name or category.</p>}
-        <div className="market-footer"><span>SHOWING {filteredProducts.length} FINDS</span><a href="#top">Back to top ↑</a></div>
-      </section>
+        </header>
 
-      <footer className="site-footer"><a className="wordmark" href="#top">market<span>flow</span><i>.</i></a><p>A little more meaning in the everyday.</p><span>© 2026 MARKETFLOW</span></footer>
-
-      {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
-      {authOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setAuthOpen(false) }}>
-        <section className="auth-modal" aria-labelledby="auth-title">
-          <button className="modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}>×</button>
-          <p className="eyebrow">GOOD TO HAVE YOU HERE</p><h2 id="auth-title">{registering ? 'Join the market.' : 'Welcome back.'}</h2>
-          <form onSubmit={submitAuth}>
-            {registering && <label>Name<input name="first_name" autoComplete="given-name" required /></label>}
-            <label>Email<input name="email" type="email" autoComplete="email" required /></label>
-            <label>Password<input name="password" type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={8} required /></label>
-            <button className="dark-button" type="submit">{registering ? 'Create account' : 'Sign in'} <span aria-hidden="true">↗</span></button>
-          </form>
-          <button className="switch-auth" onClick={() => setRegistering((value) => !value)}>{registering ? 'Already have an account? Sign in' : 'New around here? Create an account'}</button>
+        <section className="hero" id="top">
+          <div className="hero-copy">
+            <p className="eyebrow">THE GOOD-FIND MARKET</p>
+            <h1>Keep good<br/>things <em>close.</em></h1>
+            <p className="hero-description">A considered collection from independent makers. Useful things, made with care, that feel right at home.</p>
+            <a className="dark-button" href="#discover">Explore the market <span aria-hidden="true">↘</span></a>
+            <div className="hero-note"><span className="note-dot"/> Made slowly. Chosen thoughtfully.</div>
+          </div>
+          <div className="hero-image" role="img" aria-label="Handmade ceramics arranged on a warm studio table">
+            <div className="image-caption"><span>OBJECTS FOR EVERYDAY RITUALS</span><span>01 / 04</span></div>
+          </div>
+          <div className="hero-index">MF—001</div>
         </section>
-      </div>}
-    </main>
-  )
-}
 
-export default App
+        <section className="maker-strip" aria-label="Market values">
+          <span>INDEPENDENT BY NATURE</span><i/>
+          <span>BUILT TO BE KEPT</span><i/>
+          <span>GOOD PEOPLE, GOOD GOODS</span><i/>
+          <span>SMALL BATCH ALWAYS</span>
+        </section>
+
+        <section className="market-section" id="discover">
+          <div className="section-heading">
+            <div><p className="eyebrow">A FEW THINGS WE LOVE</p><h2>The market <span>edit</span></h2></div>
+            <p className="section-aside">Every piece has a person<br/>and a point of view behind it.</p>
+          </div>
+          <div className="market-controls">
+            <div className="category-tabs" role="tablist" aria-label="Product categories">
+              {categories.map((category) => <button key={category} role="tab" aria-selected={activeCategory === category} className={activeCategory === category ? 'active' : ''} onClick={() => setActiveCategory(category)}>{category}</button>)}
+            </div>
+            <label className="search-field"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m16 16 4.2 4.2"/></svg><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Find something" aria-label="Search products"/></label>
+          </div>
+          <div className="product-grid">
+            {filteredProducts.map((product, index) => <article className="product" key={product.id} style={{ animationDelay: `${index * 70}ms` }}>
+              <div className="product-image-wrap">
+                <img src={product.image.startsWith('http') ? product.image : `https://images.unsplash.com/${product.image}?auto=format&fit=crop&w=900&q=85`} alt={product.name}/>
+                {product.badge && <span className="product-badge">{product.badge}</span>}
+                <button className="add-button" aria-label={`Add ${product.name} to bag`} onClick={() => setCartCount((count) => count + 1)}>+</button>
+              </div>
+              <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
+              <p className="product-description">{product.description}</p>
+            </article>)}
+          </div>
+          {filteredProducts.length === 0 && <p className="empty-state">No finds match that search. Try another name or category.</p>}
+          <div className="market-footer"><span>SHOWING {filteredProducts.length} FINDS</span><a href="#top">Back to top ↑</a></div>
+        </section>
+
+        <footer className="site-footer"><a className="wordmark" href="#top">market<span>flow</span><i>.</i></a><p>A little more meaning in the everyday.</p><span>© 2026 MARKETFLOW</span></footer>
+
+        {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
+        {authOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setAuthOpen(false) }}>
+          <section className="auth-modal" aria-labelledby="auth-title">
+            <button className="modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}>×</button>
+            <p className="eyebrow">GOOD TO HAVE YOU HERE</p><h2 id="auth-title">{registering ? 'Join the market.' : 'Welcome back.'}</h2>
+            <form onSubmit={submitAuth}>
+              {registering && <label>Name<input name="first_name" autoComplete="given-name" required/></label>}
+              <label>Email<input name="email" type="email" autoComplete="email" required/></label>
+              <label>Password<input name="password" type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={8} required/></label>
+              <button className="dark-button" type="submit">{registering ? 'Create account' : 'Sign in'} <span aria-hidden="true">↗</span></button>
+            </form>
+            <button className="switch-auth" onClick={() => setRegistering((value) => !value)}>{registering ? 'Already have an account? Sign in' : 'New around here? Create an account'}</button>
+          </section>
+        </div>}
+        {sellerStudioOpen && token && <SellerStudio
+          apiBaseUrl={apiBaseUrl}
+          token={token}
+          onClose={() => setSellerStudioOpen(false)}
+          onCatalogChanged={refreshCatalog}
+          onNotice={setNotice}
+        />}
+      </main>
+    )
+  }
+
+  export default App

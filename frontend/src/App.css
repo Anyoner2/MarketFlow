@@ -69,7 +69,7 @@ main { overflow: hidden; }
 .site-footer .wordmark { color: #f5f1e8; font-size: 20px; }
 .site-footer p { margin: 0; color: #c2c6b8; font: 11px var(--sans); }
 .site-footer > span { color: #c2c6b8; font: 9px var(--sans); letter-spacing: 1px; }
-.toast { position: fixed; z-index: 5; right: 22px; bottom: 22px; display: flex; align-items: center; gap: 20px; max-width: calc(100vw - 44px); padding: 14px 17px; background: #213f68; color: white; box-shadow: 0 8px 30px #17231f30; font: 12px/1.4 var(--sans); animation: arrive 180ms both; }
+.toast { position: fixed; z-index: 20; right: 22px; bottom: 22px; display: flex; align-items: center; gap: 20px; max-width: calc(100vw - 44px); padding: 14px 17px; background: #213f68; color: white; box-shadow: 0 8px 30px #17231f30; font: 12px/1.4 var(--sans); animation: arrive 180ms both; }
 .toast button, .modal-close { border: 0; background: none; color: inherit; font-size: 20px; cursor: pointer; }
 .modal-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(25 32 28 / 55%); }
 .auth-modal { position: relative; width: min(100%, 420px); box-sizing: border-box; padding: 43px; background: #faf9f5; box-shadow: 0 18px 60px #1115; animation: arrive 220ms both; }
@@ -81,6 +81,39 @@ main { overflow: hidden; }
 .auth-modal input { box-sizing: border-box; width: 100%; height: 42px; border: 1px solid #d9d8cf; padding: 0 11px; background: #fffefa; color: #213f68; font: 13px var(--sans); }
 .auth-modal .dark-button { width: 100%; margin-top: 4px; }
 .switch-auth { display: block; margin: 20px auto 0; border: 0; background: none; color: #70756b; font: 10px var(--sans); cursor: pointer; }
+.seller-backdrop { position: fixed; z-index: 10; inset: 0; display: grid; place-items: center; padding: 20px; background: rgb(25 32 28 / 58%); }
+.seller-studio { width: min(920px, 100%); max-height: min(90vh, 900px); overflow: auto; padding: clamp(23px, 4vw, 42px); background: #faf9f5; box-shadow: 0 18px 60px #1115; animation: arrive 220ms both; }
+.seller-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 23px; border-bottom: 1px solid #deded5; }
+.seller-header .eyebrow { margin-bottom: 8px; }
+.seller-header h2 { margin: 0; color: #213f68; font: 500 40px/1.05 var(--display); }
+.seller-close { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #d9d8cf; background: transparent; color: #555b50; font-size: 24px; cursor: pointer; }
+.seller-section { padding: 24px 0; border-bottom: 1px solid #deded5; }
+.seller-section h3 { margin: 0 0 17px; color: #354036; font: 500 19px/1.2 var(--display); }
+.seller-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; align-items: end; }
+.seller-form label, .seller-store-bar label { display: grid; gap: 7px; color: #555b50; font: 10px/1.3 var(--sans); }
+.seller-form input, .seller-form textarea, .seller-store-bar select { width: 100%; min-height: 42px; border: 1px solid #d9d8cf; border-radius: 0; padding: 10px 11px; background: #fffefa; color: #213f68; font: 12px/1.4 var(--sans); }
+.seller-form textarea { min-height: 68px; resize: vertical; }
+.seller-form input:focus, .seller-form textarea:focus, .seller-store-bar select:focus { border-color: #bd704e; outline: 2px solid #bd704e55; outline-offset: 1px; }
+.seller-wide { grid-column: 1 / -1; }
+.seller-form > .dark-button { min-height: 42px; }
+.seller-store-bar { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 20px 0 0; }
+.seller-store-bar label { width: min(360px, 70%); }
+.seller-store-bar > span { padding-bottom: 12px; color: #73776c; font: 10px/1 var(--sans); }
+.seller-loading, .seller-empty { margin: 0; color: #73776c; font: 12px/1.6 var(--sans); }
+.seller-listings { border-bottom: 0; padding-bottom: 0; }
+.seller-product { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 15px 0; border-top: 1px solid #e5e3da; }
+.seller-product-copy { min-width: 0; }
+.seller-product-copy .product-category { margin-bottom: 5px; }
+.seller-product-copy h4 { margin: 0; overflow-wrap: anywhere; color: #303a32; font: 500 17px/1.25 var(--display); }
+.seller-product-copy > p:last-child { margin: 6px 0 0; color: #73776c; font: 10px/1.4 var(--sans); }
+.seller-product-copy > p:last-child span { padding: 0 4px; color: #bd704e; }
+.seller-product-actions { display: flex; flex: 0 0 auto; gap: 8px; }
+.seller-product-actions button { min-height: 34px; border: 1px solid #c9cec2; padding: 0 11px; background: transparent; color: #33483c; font: 10px/1 var(--sans); cursor: pointer; }
+.seller-product-actions button:hover { border-color: #213f68; color: #213f68; }
+.seller-product-actions button:disabled { opacity: .55; cursor: wait; }
+.seller-product-actions .seller-delete { border-color: #dfc8bc; color: #9b543c; }
+.seller-product-actions .seller-delete:hover { border-color: #9b543c; }
+.header-actions .text-action { white-space: nowrap; }
 @keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 760px) {
@@ -91,6 +124,8 @@ main { overflow: hidden; }
   .main-nav a { color: #687166; font-size: 10px; }
   .main-nav a:first-child { color: #213f68; }
   .header-actions { gap: 15px; }
+  .header-actions { gap: 10px; }
+  .header-actions .text-action { font-size: 10px; }
   .hero { grid-template-columns: 1fr; }
   .hero-copy { min-height: 420px; padding: 56px 8% 45px; }
   .hero h1 { font-size: clamp(60px, 16vw, 88px); }
@@ -119,6 +154,16 @@ main { overflow: hidden; }
   .site-footer p { order: 3; width: 100%; }
   .site-footer > span { font-size: 8px; }
   .auth-modal { padding: 37px 25px 28px; }
+  .seller-backdrop { place-items: end center; padding: 0; }
+  .seller-studio { width: 100%; max-height: 94dvh; padding: 23px 20px calc(22px + env(safe-area-inset-bottom)); }
+  .seller-header h2 { font-size: 34px; }
+  .seller-section { padding: 20px 0; }
+  .seller-form { grid-template-columns: 1fr; gap: 13px; }
+  .seller-wide { grid-column: auto; }
+  .seller-store-bar label { width: 65%; }
+  .seller-product { align-items: flex-start; flex-direction: column; gap: 11px; }
+  .seller-product-actions { width: 100%; }
+  .seller-product-actions button { flex: 1; min-height: 38px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
