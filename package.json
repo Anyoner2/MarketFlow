@@ -1,0 +1,11 @@
+{
+  "name": "marketflow",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:api": "npm --prefix api run dev",
+    "build": "npm --prefix frontend run build",
+    "test": "npm --prefix api test"
+  }
+}
