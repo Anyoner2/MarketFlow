@@ -21,7 +21,7 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
-const defaultApiBaseUrl = import.meta.env.DEV ? '' : window.location.origin
+const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend-git-main-donpapi.vercel.app'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
 
 function App() {
