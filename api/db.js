@@ -83,6 +83,18 @@ const schema = `
     unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
     UNIQUE (order_id, product_id)
   );
+
+  CREATE TABLE IF NOT EXISTS product_reviews (
+    id BIGSERIAL PRIMARY KEY,
+    product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE CASCADE,
+    customer_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    rating SMALLINT NOT NULL CHECK (rating BETWEEN 1 AND 5),
+    comment VARCHAR(1000) NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (product_id, customer_id)
+  );
+  CREATE INDEX IF NOT EXISTS product_reviews_product_created_idx
+    ON product_reviews (product_id, created_at DESC);
 `;
 
 let schemaReady;

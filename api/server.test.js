@@ -36,6 +36,16 @@ test('order endpoints reject unauthenticated requests before touching the databa
   assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
 });
 
+test('creating a product review requires authentication', async () => {
+  const response = await fetch(`${baseUrl}/api/products/1/reviews/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rating: 5, comment: 'Lovely.' }),
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
+});
+
 test('checkout rejects unauthenticated requests before touching the database', async () => {
   const response = await fetch(`${baseUrl}/api/orders/checkout/`, {
     method: 'POST',

@@ -10,7 +10,35 @@ type Product = {
   description: string
   image: string
   badge?: string
+  average_rating?: number | null
+  review_count?: number
   previewOnly?: boolean
+}
+
+type ProductReview = {
+  id: number
+  rating: number
+  comment: string
+  created_at: string
+  reviewer_name: string
+}
+
+type CustomerOrder = {
+  id: number
+  order_number: string
+  status: string
+  payment_status: string
+  payment_result_description?: string
+  created_at: string
+  total_amount: string
+  items: Array<{
+    id: number
+    product: number
+    product_name: string
+    quantity: number
+    unit_price: string
+    can_review: boolean
+  }>
 }
 
 const previewProducts: Product[] = [
@@ -44,6 +72,16 @@ function App() {
   const [checkingOut, setCheckingOut] = useState(false)
   const [paymentOrderId, setPaymentOrderId] = useState<number | null>(null)
   const [paymentStatus, setPaymentStatus] = useState('')
+  const [ordersOpen, setOrdersOpen] = useState(false)
+  const [orders, setOrders] = useState<CustomerOrder[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [reviewsProduct, setReviewsProduct] = useState<Product | null>(null)
+  const [reviews, setReviews] = useState<ProductReview[]>([])
+  const [reviewsLoading, setReviewsLoading] = useState(false)
+  const [reviewEligible, setReviewEligible] = useState(false)
+  const [reviewRating, setReviewRating] = useState(5)
+  const [reviewComment, setReviewComment] = useState('')
+  const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [notice, setNotice] = useState('')
@@ -56,6 +94,73 @@ function App() {
       setProducts(await loadCatalog())
     } catch {
       setProducts(previewCatalog)
+    }
+  }
+
+  async function openOrders() {
+    if (!token) {
+      setAuthOpen(true)
+      return
+    }
+    setOrdersOpen(true)
+    setOrdersLoading(true)
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/orders/`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not load your orders.')
+      setOrders(data as CustomerOrder[])
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not load your orders.')
+    } finally {
+      setOrdersLoading(false)
+    }
+  }
+
+  async function openReviews(product: Product, canReview = false) {
+    setReviewsProduct(product)
+    setReviews([])
+    setReviewEligible(canReview)
+    setReviewRating(5)
+    setReviewComment('')
+    setReviewsLoading(true)
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/products/${product.id}/reviews/`)
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not load product reviews.')
+      setReviews(data as ProductReview[])
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not load product reviews.')
+    } finally {
+      setReviewsLoading(false)
+    }
+  }
+
+  async function submitReview(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!reviewsProduct || !token) return
+    setReviewSubmitting(true)
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/products/${reviewsProduct.id}/reviews/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ rating: reviewRating, comment: reviewComment }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || data.rating?.[0] || 'Could not submit your review.')
+      setReviews((current) => [data as ProductReview, ...current])
+      setReviewEligible(false)
+      setReviewComment('')
+      await refreshCatalog()
+      setNotice('Thanks for sharing your review.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not submit your review.')
+    } finally {
+      setReviewSubmitting(false)
     }
   }
 
@@ -214,6 +319,7 @@ function App() {
           </nav>
           <div className="header-actions">
             {token ? <>
+              <button className="text-action" onClick={() => void openOrders()}>My orders</button>
               <button className="text-action" onClick={() => setSellerStudioOpen(true)}>Seller studio</button>
               <button className="text-action" onClick={signOut}>Sign out</button>
             </> : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
@@ -267,6 +373,10 @@ function App() {
                 }}><span aria-hidden="true">+</span> Add to bag</button>
               </div>
               <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
+              <div className="product-reviews">
+                <span>{product.review_count ? `★ ${Number(product.average_rating).toFixed(1)} · ${product.review_count} review${product.review_count === 1 ? '' : 's'}` : 'No reviews yet'}</span>
+                <button type="button" disabled={product.previewOnly} onClick={() => void openReviews(product)}>Reviews</button>
+              </div>
               <p className="product-description">{product.description}</p>
             </article>)}
           </div>
@@ -311,6 +421,58 @@ function App() {
                 {paymentOrderId && paymentStatus === 'pending' && <p role="status">M-Pesa prompt sent. Check your phone and enter your PIN.</p>}
               </form>}
             </>}
+          </section>
+        </div>}
+        {ordersOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setOrdersOpen(false) }}>
+          <section className="auth-modal account-modal" aria-labelledby="orders-title">
+            <button className="modal-close" aria-label="Close orders" onClick={() => setOrdersOpen(false)}>×</button>
+            <p className="eyebrow">YOUR MARKETFLOW ACCOUNT</p><h2 id="orders-title">My orders</h2>
+            {ordersLoading ? <p role="status">Loading your orders…</p> : orders.length === 0
+              ? <p>Your orders will appear here after checkout.</p>
+              : <div className="customer-orders">{orders.map((order) => {
+                const trackingStages = ['paid', 'processing', 'shipped', 'delivered']
+                const currentStage = trackingStages.indexOf(order.status)
+                const statusLabel = order.status.replaceAll('_', ' ')
+                return <article className="customer-order" key={order.id}>
+                  <header>
+                    <div><span className="order-label">ORDER</span><strong>{order.order_number}</strong></div>
+                    <span className={`order-status order-status-${order.payment_status}`}>{order.payment_status.replaceAll('_', ' ')}</span>
+                  </header>
+                  <p className="order-date">{new Date(order.created_at).toLocaleDateString()}</p>
+                  {currentStage >= 0 ? <div className="order-tracking" aria-label={`Order tracking: ${statusLabel}`}>
+                    {['Confirmed', 'Preparing', 'On the way', 'Delivered'].map((stage, index) => <span className={index <= currentStage ? 'complete' : ''} key={stage}>{stage}</span>)}
+                  </div> : <p className="order-tracking-message">{order.payment_status === 'pending' ? 'Complete the M-Pesa prompt to confirm this order.' : order.payment_status === 'failed' ? order.payment_result_description || 'Payment was not completed.' : `Order status: ${statusLabel}.`}</p>}
+                  <div className="customer-order-items">{order.items.map((item) => <div key={item.id}>
+                    <span>{item.product_name} × {item.quantity}</span>
+                    {item.can_review && <button type="button" onClick={() => {
+                      const product = products.find((entry) => entry.id === item.product)
+                      if (product) void openReviews(product, true)
+                    }}>Write a review</button>}
+                  </div>)}</div>
+                  <p className="order-total"><span>Total</span><strong>KSh {Number(order.total_amount).toLocaleString('en-KE')}</strong></p>
+                </article>
+              })}</div>}
+          </section>
+        </div>}
+        {reviewsProduct && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setReviewsProduct(null) }}>
+          <section className="auth-modal account-modal" aria-labelledby="reviews-title">
+            <button className="modal-close" aria-label="Close reviews" onClick={() => setReviewsProduct(null)}>×</button>
+            <p className="eyebrow">CUSTOMER NOTES</p><h2 id="reviews-title">{reviewsProduct.name}</h2>
+            {reviewsLoading ? <p role="status">Loading reviews…</p> : reviews.length === 0
+              ? <p>No reviews yet. Be the first to share your experience after purchase.</p>
+              : <div className="review-list">{reviews.map((review) => <article key={review.id}>
+                <div><span className="review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}{'☆'.repeat(5 - review.rating)}</span><time>{new Date(review.created_at).toLocaleDateString()}</time></div>
+                <strong>{review.reviewer_name || 'MarketFlow customer'}</strong>
+                {review.comment && <p>{review.comment}</p>}
+              </article>)}</div>}
+            {reviewEligible && token && <form className="review-form" onSubmit={submitReview}>
+              <h3>Share your review</h3>
+              <label>Rating<select value={reviewRating} onChange={(event) => setReviewRating(Number(event.target.value))}>
+                {[5, 4, 3, 2, 1].map((rating) => <option value={rating} key={rating}>{rating} {rating === 1 ? 'star' : 'stars'}</option>)}
+              </select></label>
+              <label>Your note<textarea value={reviewComment} onChange={(event) => setReviewComment(event.target.value)} maxLength={1000} rows={3} placeholder="What did you think?" /></label>
+              <button className="dark-button" type="submit" disabled={reviewSubmitting}>{reviewSubmitting ? 'Submitting…' : 'Submit review'} <span aria-hidden="true">↗</span></button>
+            </form>}
           </section>
         </div>}
         {authOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setAuthOpen(false) }}>

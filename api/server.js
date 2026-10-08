@@ -100,6 +100,8 @@ function productResponse(row) {
     stock_quantity: row.stock_quantity,
     is_active: row.is_active,
     store_id: row.store_id,
+    average_rating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating),
+    review_count: Number(row.review_count || 0),
     created_at: row.created_at,
     updated_at: row.updated_at,
   };
@@ -115,8 +117,13 @@ async function getOrder(client, orderId, customerId) {
   if (!orderResult.rowCount) return null;
   const order = orderResult.rows[0];
   const itemResult = await client.query(
-    `SELECT oi.id, oi.product_id AS product, p.name AS product_name, oi.quantity, oi.unit_price
+    `SELECT oi.id, oi.product_id AS product, p.name AS product_name, oi.quantity, oi.unit_price,
+            (o.payment_status = 'paid' AND NOT EXISTS (
+              SELECT 1 FROM product_reviews pr
+              WHERE pr.product_id = oi.product_id AND pr.customer_id = o.customer_id
+            )) AS can_review
      FROM order_items oi JOIN products p ON p.id = oi.product_id
+     JOIN orders o ON o.id = oi.order_id
      WHERE oi.order_id = $1 ORDER BY oi.id`,
     [order.id],
   );
@@ -138,13 +145,69 @@ app.get('/api/health', async (req, res, next) => {
 app.get('/api/products/', async (req, res, next) => {
   try {
     const result = await query(
-      `SELECT p.*, p.store_id FROM products p
+      `SELECT p.*, p.store_id, review_stats.average_rating, COALESCE(review_stats.review_count, 0) AS review_count
+       FROM products p
        JOIN stores s ON s.id = p.store_id
+       LEFT JOIN (
+         SELECT product_id, ROUND(AVG(rating)::numeric, 1) AS average_rating, COUNT(*) AS review_count
+         FROM product_reviews GROUP BY product_id
+       ) review_stats ON review_stats.product_id = p.id
        WHERE p.is_active = TRUE AND s.is_active = TRUE
        ORDER BY p.created_at DESC`,
     );
     res.json(result.rows.map(productResponse));
   } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/products/:id/reviews/', async (req, res, next) => {
+  try {
+    const productId = parseId(req.params.id);
+    const result = await query(
+      `SELECT pr.id, pr.rating, pr.comment, pr.created_at, u.first_name AS reviewer_name
+       FROM product_reviews pr JOIN users u ON u.id = pr.customer_id
+       JOIN products p ON p.id = pr.product_id
+       JOIN stores s ON s.id = p.store_id
+       WHERE pr.product_id = $1 AND p.is_active = TRUE AND s.is_active = TRUE
+       ORDER BY pr.created_at DESC`,
+      [productId],
+    );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/products/:id/reviews/', authenticate, async (req, res, next) => {
+  try {
+    const productId = parseId(req.params.id);
+    const { rating, comment = '' } = req.body || {};
+    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+      throw apiError(400, 'Choose a rating from 1 to 5.', 'rating');
+    }
+    if (typeof comment !== 'string' || comment.length > 1000) {
+      throw apiError(400, 'Review comments must be 1000 characters or fewer.', 'comment');
+    }
+
+    const purchase = await query(
+      `SELECT 1 FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       WHERE o.customer_id = $1 AND o.payment_status = 'paid' AND oi.product_id = $2
+       LIMIT 1`,
+      [req.user.id, productId],
+    );
+    if (!purchase.rowCount) throw apiError(403, 'You can review a product after a paid purchase.', 'detail');
+
+    const result = await query(
+      `INSERT INTO product_reviews (product_id, customer_id, rating, comment)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id, rating, comment, created_at`,
+      [productId, req.user.id, rating, comment.trim()],
+    );
+    res.status(201).json({ ...result.rows[0], reviewer_name: req.user.first_name });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ detail: 'You have already reviewed this product.' });
     next(error);
   }
 });

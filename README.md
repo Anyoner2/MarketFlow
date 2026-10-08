@@ -31,6 +31,8 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `POST /api/auth/login/` accepts email and password and returns access and refresh tokens.
 - `POST /api/auth/refresh/` exchanges a refresh token for a new access token.
 - `GET /api/products/` lists active products from active stores without authentication.
+- `GET /api/products/<id>/reviews/` lists reviews for an active product.
+- `POST /api/products/<id>/reviews/` creates one review for a product the signed-in customer has paid for.
 - `GET, POST /api/stores/` lists the current user's stores or creates a store owned by that user.
 - `GET, PATCH /api/stores/<id>/` retrieves or updates one of the current user's stores.
 - `GET, POST /api/seller/products/` lists or creates products in stores owned by the current user.
@@ -39,6 +41,8 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `POST /api/orders/checkout/` validates inventory and starts an M-Pesa STK Push for the current user's order.
 - `POST /api/payments/mpesa/callback/` receives Daraja payment confirmations.
 - `GET /api/orders/<id>/` retrieves one of the current user's orders.
+
+Customers can view order/payment progress in **My orders**. Product reviews are limited to one per customer and product, and can only be submitted after a successful purchase.
 
 Authenticated requests send `Authorization: Bearer <access-token>`. Access tokens last 15 minutes; refresh tokens last 30 days.
 
