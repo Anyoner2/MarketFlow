@@ -4,6 +4,7 @@ const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { ensureSchema, pool, query } = require('./db');
+const { configuration: mpesaConfiguration, initiateStkPush, normalizePhone } = require('./mpesa');
 
 const app = express();
 const jwtSecret = process.env.JWT_SECRET;
@@ -106,7 +107,9 @@ function productResponse(row) {
 
 async function getOrder(client, orderId, customerId) {
   const orderResult = await client.query(
-    'SELECT id, order_number, status, currency, created_at FROM orders WHERE id = $1 AND customer_id = $2',
+    `SELECT id, order_number, status, payment_status, payment_receipt_number,
+            payment_phone_number, payment_result_description, currency, created_at
+     FROM orders WHERE id = $1 AND customer_id = $2`,
     [orderId, customerId],
   );
   if (!orderResult.rowCount) return null;
@@ -365,9 +368,85 @@ app.get('/api/orders/', authenticate, async (req, res, next) => {
   }
 });
 
-app.post('/api/orders/', authenticate, async (req, res, next) => {
+app.post('/api/payments/mpesa/callback/', async (req, res, next) => {
+  const callback = req.body?.Body?.stkCallback;
+  const checkoutRequestId = callback?.CheckoutRequestID;
+  if (typeof checkoutRequestId !== 'string' || !Number.isInteger(callback?.ResultCode)) {
+    return res.status(400).json({ detail: 'Invalid M-Pesa callback payload.' });
+  }
+
+  const client = await pool.connect().catch(next);
+  if (!client) return;
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT id, status, payment_status FROM orders
+       WHERE payment_checkout_request_id = $1 FOR UPDATE`,
+      [checkoutRequestId],
+    );
+    if (!result.rowCount) {
+      console.error(`Received an M-Pesa callback for unknown checkout ${checkoutRequestId}.`);
+      throw apiError(404, 'Payment request not found.');
+    }
+
+    const order = result.rows[0];
+    if (order.payment_status !== 'pending') {
+      await client.query('COMMIT');
+      return res.json({ ResultCode: 0, ResultDesc: 'Callback already processed.' });
+    }
+
+    if (callback.ResultCode === 0) {
+      const metadata = callback.CallbackMetadata?.Item || [];
+      const callbackValue = (name) => metadata.find((item) => item.Name === name)?.Value;
+      const amount = Number(callbackValue('Amount'));
+      const receiptNumber = callbackValue('MpesaReceiptNumber');
+      const totalResult = await client.query(
+        'SELECT COALESCE(SUM(unit_price * quantity), 0) AS total FROM order_items WHERE order_id = $1',
+        [order.id],
+      );
+      if (!Number.isFinite(amount) || amount !== Number(totalResult.rows[0].total) || typeof receiptNumber !== 'string') {
+        throw apiError(400, 'M-Pesa payment details do not match this order.');
+      }
+      await client.query(
+        `UPDATE orders SET status = 'paid', payment_status = 'paid',
+          payment_receipt_number = $1, payment_result_description = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [receiptNumber, callback.ResultDesc || 'Payment received.', order.id],
+      );
+    } else {
+      await client.query(
+        `UPDATE products p SET stock_quantity = p.stock_quantity + oi.quantity, updated_at = NOW()
+         FROM order_items oi WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+        [order.id],
+      );
+      await client.query(
+        `UPDATE orders SET status = 'payment_failed', payment_status = 'failed',
+          payment_result_description = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [callback.ResultDesc || 'M-Pesa payment was not completed.', order.id],
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ ResultCode: 0, ResultDesc: 'Accepted.' });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, res, next) => {
   const requestedItems = req.body?.items;
   if (!Array.isArray(requestedItems) || !requestedItems.length) return res.status(400).json({ items: ['At least one item is required.'] });
+  let phoneNumber;
+  try {
+    phoneNumber = normalizePhone(req.body?.phone_number);
+    mpesaConfiguration();
+  } catch (error) {
+    return res.status(error.status || 400).json({ detail: error.message });
+  }
   const seen = new Set();
   for (const item of requestedItems) {
     if (!Number.isSafeInteger(item?.product_id) || item.product_id < 1 || !Number.isSafeInteger(item?.quantity) || item.quantity < 1) {
@@ -377,6 +456,8 @@ app.post('/api/orders/', authenticate, async (req, res, next) => {
     seen.add(item.product_id);
   }
 
+  let orderId;
+  let amount;
   try {
     await ensureSchema();
   } catch (error) {
@@ -401,11 +482,18 @@ app.post('/api/orders/', authenticate, async (req, res, next) => {
       if (product.stock_quantity < item.quantity) throw apiError(400, `Not enough stock for ${product.name}.`, 'items');
     }
 
-    const orderResult = await client.query(
-      `INSERT INTO orders (order_number, customer_id) VALUES ($1, $2) RETURNING id`,
-      [crypto.randomUUID(), req.user.id],
+    amount = requestedItems.reduce(
+      (sum, item) => sum + Number(productMap.get(item.product_id).price) * item.quantity,
+      0,
     );
-    const orderId = orderResult.rows[0].id;
+    if (!Number.isSafeInteger(amount) || amount < 1) throw apiError(400, 'M-Pesa checkout requires a whole-number KES total.', 'items');
+
+    const orderResult = await client.query(
+      `INSERT INTO orders (order_number, customer_id, payment_status, payment_phone_number)
+       VALUES ($1, $2, 'initiating', $3) RETURNING id`,
+      [crypto.randomUUID(), req.user.id, phoneNumber],
+    );
+    orderId = orderResult.rows[0].id;
     for (const item of requestedItems) {
       const product = productMap.get(item.product_id);
       await client.query('UPDATE products SET stock_quantity = stock_quantity - $1, updated_at = NOW() WHERE id = $2', [item.quantity, product.id]);
@@ -415,14 +503,76 @@ app.post('/api/orders/', authenticate, async (req, res, next) => {
       );
     }
 
-    const order = await getOrder(client, orderId, req.user.id);
     await client.query('COMMIT');
-    res.status(201).json(order);
   } catch (error) {
     await client.query('ROLLBACK').catch(() => {});
     next(error);
+    return;
   } finally {
     client.release();
+  }
+
+  let payment;
+  try {
+    payment = await initiateStkPush({
+      phoneNumber,
+      amount,
+      accountReference: `MF${String(orderId).slice(-10)}`,
+      transactionDescription: 'MarketFlow order',
+    });
+  } catch (error) {
+    try {
+      await ensureSchema();
+      const cleanupClient = await pool.connect();
+      try {
+        await cleanupClient.query('BEGIN');
+        const currentOrder = await cleanupClient.query(
+          'SELECT payment_status FROM orders WHERE id = $1 FOR UPDATE',
+          [orderId],
+        );
+        if (currentOrder.rows[0]?.payment_status === 'initiating') {
+          await cleanupClient.query(
+            `UPDATE products p SET stock_quantity = p.stock_quantity + oi.quantity, updated_at = NOW()
+             FROM order_items oi WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+            [orderId],
+          );
+          await cleanupClient.query(
+            `UPDATE orders SET status = 'payment_failed', payment_status = 'failed',
+              payment_result_description = $1, updated_at = NOW() WHERE id = $2`,
+            [error.message, orderId],
+          );
+        }
+        await cleanupClient.query('COMMIT');
+      } catch (cleanupError) {
+        await cleanupClient.query('ROLLBACK').catch(() => {});
+        console.error('Could not release inventory after a failed M-Pesa request.', cleanupError);
+      } finally {
+        cleanupClient.release();
+      }
+    } catch (cleanupError) {
+      console.error('Could not connect to release inventory after a failed M-Pesa request.', cleanupError);
+    }
+    error.status = error.status || 502;
+    return next(error);
+  }
+
+  try {
+    const client = await pool.connect();
+    try {
+      await client.query(
+        `UPDATE orders SET payment_status = 'pending',
+          payment_checkout_request_id = $1, payment_merchant_request_id = $2, updated_at = NOW()
+         WHERE id = $3 AND payment_status = 'initiating'`,
+        [payment.CheckoutRequestID, payment.MerchantRequestID, orderId],
+      );
+      const order = await getOrder(client, orderId, req.user.id);
+      res.status(202).json({ ...order, payment_message: payment.CustomerMessage || 'Check your phone to complete the M-Pesa payment.' });
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    console.error(`M-Pesa accepted order ${orderId}, but its checkout reference could not be saved.`, error);
+    next(error);
   }
 });
 

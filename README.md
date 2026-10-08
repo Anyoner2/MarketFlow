@@ -23,7 +23,7 @@ npm install
 npm run dev
 ```
 
-The storefront runs at `http://localhost:5173/` and proxies `/api` requests to the Node API on port 3000.
+The storefront runs at `http://localhost:5173/` and proxies `/api` requests to the hosted API. Local sign-ins, account creation, and marketplace changes therefore use the live service. To use a local API instead, change the proxy target in `frontend/vite.config.ts` to `http://127.0.0.1:3000`.
 
 ## API routes
 
@@ -35,22 +35,25 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `GET, PATCH /api/stores/<id>/` retrieves or updates one of the current user's stores.
 - `GET, POST /api/seller/products/` lists or creates products in stores owned by the current user.
 - `GET, PATCH, DELETE /api/seller/products/<id>/` manages one of the current user's products.
-- `GET, POST /api/orders/` lists the current user's orders or places an order.
+- `GET /api/orders/` lists the current user's orders.
+- `POST /api/orders/checkout/` validates inventory and starts an M-Pesa STK Push for the current user's order.
+- `POST /api/payments/mpesa/callback/` receives Daraja payment confirmations.
 - `GET /api/orders/<id>/` retrieves one of the current user's orders.
 
 Authenticated requests send `Authorization: Bearer <access-token>`. Access tokens last 15 minutes; refresh tokens last 30 days.
 
-Order requests contain product IDs and quantities only. Product availability, price, and inventory are checked by the server when the order is created:
+Checkout requests contain the customer's Kenyan M-Pesa phone number plus product IDs and quantities. Product availability, price, and inventory are checked by the server:
 
 ```json
 {
+	"phone_number": "+254712345678",
 	"items": [
 		{ "product_id": 1, "quantity": 2 }
 	]
 }
 ```
 
-The API currently records pending orders; payment capture and fulfillment require a payment provider and shipping workflow to be selected.
+The API reserves inventory while the Daraja STK Push is pending, marks an order paid only after a successful callback, and restores stock if payment fails. Daraja requires a whole-number KES total. The production catalog must contain active seller listings; the storefront's sample preview listings are not purchasable. Order fulfillment and shipping notifications still require a shipping workflow.
 
 ## Currency
 
@@ -69,9 +72,16 @@ DATABASE_URL=<managed PostgreSQL connection string>
 JWT_SECRET=<long random secret>
 JWT_REFRESH_SECRET=<different long random secret>
 CORS_ORIGIN=https://<your-frontend-vercel-domain>
+MPESA_ENV=sandbox
+MPESA_CONSUMER_KEY=<Daraja sandbox consumer key>
+MPESA_CONSUMER_SECRET=<Daraja sandbox consumer secret>
+MPESA_SHORTCODE=174379
+MPESA_PASSKEY=<Daraja sandbox passkey>
+MPESA_CALLBACK_URL=https://<your-api-vercel-domain>/api/payments/mpesa/callback/
 ```
 
 The API requires a persistent PostgreSQL database; Vercel's function filesystem and process memory are not persistent. The API initializes the schema automatically.
+Use Daraja sandbox credentials and test numbers first. Set these variables in Vercel's API project environment settings; never commit them or paste them into chat. The callback URL must be a public HTTPS endpoint. Sandbox phone prompts and callbacks cannot reach a localhost-only backend.
 
 ### Storefront project
 

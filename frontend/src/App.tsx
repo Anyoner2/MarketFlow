@@ -10,6 +10,7 @@ type Product = {
   description: string
   image: string
   badge?: string
+  previewOnly?: boolean
 }
 
 const previewProducts: Product[] = [
@@ -22,6 +23,7 @@ const previewProducts: Product[] = [
 ]
 
 const categories = ['All finds', 'Home', 'Accessories', 'Art']
+const previewCatalog = previewProducts.map((product) => ({ ...product, previewOnly: true }))
 const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend.vercel.app'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
 
@@ -29,25 +31,31 @@ async function loadCatalog(): Promise<Product[]> {
   const response = await fetch(`${apiBaseUrl}/api/products/`)
   if (!response.ok) throw new Error('Catalog unavailable')
   const data = await response.json() as Product[]
-  return data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image })) : previewProducts
+  return data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image, previewOnly: false })) : previewCatalog
 }
 
 function App() {
-  const [products, setProducts] = useState<Product[]>(previewProducts)
+  const [products, setProducts] = useState<Product[]>(previewCatalog)
   const [activeCategory, setActiveCategory] = useState('All finds')
   const [search, setSearch] = useState('')
-  const [cartCount, setCartCount] = useState(0)
+  const [cart, setCart] = useState<Record<number, number>>({})
+  const [cartOpen, setCartOpen] = useState(false)
+  const [phoneNumber, setPhoneNumber] = useState('')
+  const [checkingOut, setCheckingOut] = useState(false)
+  const [paymentOrderId, setPaymentOrderId] = useState<number | null>(null)
+  const [paymentStatus, setPaymentStatus] = useState('')
   const [authOpen, setAuthOpen] = useState(false)
   const [registering, setRegistering] = useState(false)
   const [notice, setNotice] = useState('')
   const [token, setToken] = useState(() => localStorage.getItem('marketflow_access'))
   const [sellerStudioOpen, setSellerStudioOpen] = useState(false)
+  const cartCount = Object.values(cart).reduce((total, quantity) => total + quantity, 0)
 
   async function refreshCatalog() {
     try {
       setProducts(await loadCatalog())
     } catch {
-      setProducts(previewProducts)
+      setProducts(previewCatalog)
     }
   }
 
@@ -55,9 +63,48 @@ function App() {
     let active = true
     void loadCatalog()
       .then((data) => { if (active) setProducts(data) })
-      .catch(() => { if (active) setProducts(previewProducts) })
+      .catch(() => { if (active) setProducts(previewCatalog) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if (paymentOrderId === null || !token) return
+    let active = true
+    const checkPayment = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/api/orders/${paymentOrderId}/`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (!response.ok) throw new Error('Could not check payment status.')
+        const order = await response.json() as {
+          payment_status: string
+          payment_result_description?: string
+          order_number: string
+          items?: Array<{ product: number; quantity: number }>
+        }
+        if (!active) return
+        setPaymentStatus(order.payment_status)
+        if (order.payment_status === 'paid') setNotice(`Payment received. Order ${order.order_number} is confirmed.`)
+        if (order.payment_status === 'failed') {
+          setNotice(order.payment_result_description || 'M-Pesa payment was not completed.')
+          setCart((current) => {
+            const restored = { ...current }
+            for (const item of order.items || []) restored[item.product] = (restored[item.product] || 0) + item.quantity
+            return restored
+          })
+        }
+        if (order.payment_status === 'paid' || order.payment_status === 'failed') window.clearInterval(timer)
+      } catch (error) {
+        if (active) setNotice(error instanceof Error ? error.message : 'Could not check payment status.')
+      }
+    }
+    const timer = window.setInterval(() => { void checkPayment() }, 3000)
+    void checkPayment()
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [paymentOrderId, token])
 
   const filteredProducts = products.filter((product) => {
     const matchesCategory = activeCategory === 'All finds' || product.category === activeCategory
@@ -104,6 +151,47 @@ function App() {
     setNotice('You have signed out.')
   }
 
+  async function checkout(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!token) {
+      setAuthOpen(true)
+      return
+    }
+    setCheckingOut(true)
+    setNotice('')
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/orders/checkout/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          phone_number: phoneNumber,
+          items: Object.entries(cart).map(([productId, quantity]) => ({
+            product_id: Number(productId),
+            quantity,
+          })),
+        }),
+      })
+      const data = await response.json()
+      if (!response.ok) {
+        const messages = Object.values(data)
+          .flatMap((value) => Array.isArray(value) ? value : [value])
+          .filter((value): value is string => typeof value === 'string')
+        throw new Error(messages.join(' ') || 'Could not start M-Pesa checkout.')
+      }
+      setPaymentOrderId(data.id)
+      setPaymentStatus(data.payment_status)
+      setCart({})
+      setNotice(data.payment_message || 'Check your phone to complete the M-Pesa payment.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not start M-Pesa checkout.')
+    } finally {
+      setCheckingOut(false)
+    }
+  }
+
   return (
       <main>
         <div className="announcement">Independent makers, good things, delivered. <span>Free shipping over KSh 10,000</span></div>
@@ -119,7 +207,7 @@ function App() {
               <button className="text-action" onClick={() => setSellerStudioOpen(true)}>Seller studio</button>
               <button className="text-action" onClick={signOut}>Sign out</button>
             </> : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
-            <button className="cart-button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setNotice(cartCount ? `${cartCount} item${cartCount === 1 ? '' : 's'} in your bag.` : 'Your bag is empty for now.')}>
+            <button className="cart-button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setCartOpen(true)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
               <span>Bag <b>{cartCount}</b></span>
             </button>
@@ -163,12 +251,13 @@ function App() {
               <div className="product-image-wrap">
                 <img src={product.image.startsWith('http') ? product.image : `https://images.unsplash.com/${product.image}?auto=format&fit=crop&w=900&q=85`} alt={product.name}/>
                 {product.badge && <span className="product-badge">{product.badge}</span>}
-                <button className="add-button" aria-label={`Add ${product.name} to bag`} onClick={() => setCartCount((count) => count + 1)}>+</button>
+                <button className="add-button" aria-label={product.previewOnly ? `${product.name} preview only` : `Add ${product.name} to bag`} disabled={product.previewOnly} onClick={() => setCart((current) => ({ ...current, [product.id]: (current[product.id] || 0) + 1 }))}>+</button>
               </div>
               <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
               <p className="product-description">{product.description}</p>
             </article>)}
           </div>
+          {products.every((product) => product.previewOnly) && <p className="catalog-notice">These are preview listings. Sign in and publish your own products to start selling.</p>}
           {filteredProducts.length === 0 && <p className="empty-state">No finds match that search. Try another name or category.</p>}
           <div className="market-footer"><span>SHOWING {filteredProducts.length} FINDS</span><a href="#top">Back to top ↑</a></div>
         </section>
@@ -176,6 +265,39 @@ function App() {
         <footer className="site-footer"><a className="wordmark" href="#top">market<span>flow</span><i>.</i></a><p>A little more meaning in the everyday.</p><span>© 2026 MARKETFLOW</span></footer>
 
         {notice && <div className="toast" role="status"><span>{notice}</span><button aria-label="Dismiss message" onClick={() => setNotice('')}>×</button></div>}
+        {cartOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setCartOpen(false) }}>
+          <section className="auth-modal cart-modal" aria-labelledby="cart-title">
+            <button className="modal-close" aria-label="Close shopping bag" onClick={() => setCartOpen(false)}>×</button>
+            <p className="eyebrow">YOUR GOOD FINDS</p><h2 id="cart-title">Shopping bag</h2>
+            {cartCount === 0 ? <p>{paymentOrderId ? `Order payment status: ${paymentStatus || 'checking'}.` : 'Your bag is empty for now.'}</p> : <>
+              <div className="cart-items">
+                {Object.entries(cart).map(([productId, quantity]) => {
+                  const product = products.find((item) => item.id === Number(productId))
+                  if (!product) return null
+                  return <div className="cart-item" key={productId}>
+                    <div><strong>{product.name}</strong><span>KSh {Number(product.price).toLocaleString('en-KE')} each</span></div>
+                    <div className="cart-quantity">
+                      <button type="button" aria-label={`Remove one ${product.name}`} onClick={() => setCart((current) => {
+                        const next = { ...current }
+                        if (next[product.id] <= 1) delete next[product.id]
+                        else next[product.id] -= 1
+                        return next
+                      })}>−</button>
+                      <span>{quantity}</span>
+                      <button type="button" aria-label={`Add one ${product.name}`} onClick={() => setCart((current) => ({ ...current, [product.id]: current[product.id] + 1 }))}>+</button>
+                    </div>
+                  </div>
+                })}
+              </div>
+              <p className="cart-total"><span>Total</span><strong>KSh {Object.entries(cart).reduce((total, [productId, quantity]) => total + Number(products.find((product) => product.id === Number(productId))?.price || 0) * quantity, 0).toLocaleString('en-KE')}</strong></p>
+              {!token ? <button className="dark-button" type="button" onClick={() => setAuthOpen(true)}>Sign in to checkout <span aria-hidden="true">↗</span></button> : <form onSubmit={checkout}>
+                <label>M-Pesa phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} placeholder="+254 7XX XXX XXX" autoComplete="tel" required /></label>
+                <button className="dark-button" type="submit" disabled={checkingOut || paymentStatus === 'pending'}>{checkingOut ? 'Starting payment…' : 'Pay with M-Pesa'} <span aria-hidden="true">↗</span></button>
+                {paymentOrderId && paymentStatus === 'pending' && <p role="status">M-Pesa prompt sent. Check your phone and enter your PIN.</p>}
+              </form>}
+            </>}
+          </section>
+        </div>}
         {authOpen && <div className="modal-backdrop" onClick={(event) => { if (event.target === event.currentTarget) setAuthOpen(false) }}>
           <section className="auth-modal" aria-labelledby="auth-title">
             <button className="modal-close" aria-label="Close sign in" onClick={() => setAuthOpen(false)}>×</button>

@@ -35,3 +35,23 @@ test('order endpoints reject unauthenticated requests before touching the databa
   assert.equal(response.status, 401);
   assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
 });
+
+test('checkout rejects unauthenticated requests before touching the database', async () => {
+  const response = await fetch(`${baseUrl}/api/orders/checkout/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ phone_number: '0712345678', items: [{ product_id: 1, quantity: 1 }] }),
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
+});
+
+test('M-Pesa callback rejects malformed payloads before touching the database', async () => {
+  const response = await fetch(`${baseUrl}/api/payments/mpesa/callback/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ Body: {} }),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { detail: 'Invalid M-Pesa callback payload.' });
+});

@@ -55,10 +55,24 @@ const schema = `
     order_number UUID NOT NULL UNIQUE,
     customer_id BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
     status VARCHAR(16) NOT NULL DEFAULT 'pending',
+    payment_status VARCHAR(24) NOT NULL DEFAULT 'unpaid',
+    payment_checkout_request_id TEXT,
+    payment_merchant_request_id TEXT,
+    payment_receipt_number TEXT,
+    payment_phone_number VARCHAR(16),
+    payment_result_description TEXT NOT NULL DEFAULT '',
     currency CHAR(3) NOT NULL DEFAULT 'KES',
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(24) NOT NULL DEFAULT 'unpaid';
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_checkout_request_id TEXT;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_merchant_request_id TEXT;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_receipt_number TEXT;
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_phone_number VARCHAR(16);
+  ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_result_description TEXT NOT NULL DEFAULT '';
+  CREATE UNIQUE INDEX IF NOT EXISTS orders_payment_checkout_request_idx
+    ON orders (payment_checkout_request_id) WHERE payment_checkout_request_id IS NOT NULL;
   CREATE INDEX IF NOT EXISTS orders_customer_created_idx ON orders (customer_id, created_at DESC);
 
   CREATE TABLE IF NOT EXISTS order_items (
