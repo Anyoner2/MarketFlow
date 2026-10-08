@@ -45,14 +45,26 @@ type CustomerOrder = {
 
 const previewProducts: Product[] = [
   { id: 1, name: 'Everyday Ceramic Set', category: 'Home', price: '5400', description: 'Hand-finished stoneware for the slow mornings.', image: 'photo-1610701596007-11502861dcfa', badge: 'Bestseller' },
-  { id: 2, name: 'Market Tote No. 04', category: 'Accessories', price: '3600', description: 'A sturdy carryall made for the long way home.', image: 'photo-1590874103328-eac38a683ce7' },
-  { id: 3, name: 'Botanical Study Print', category: 'Art', price: '4700', description: 'Archival ink on softly textured cotton paper.', image: 'photo-1579783902614-a3fb3927b6a5', badge: 'Small batch' },
+  { id: 2, name: 'Market Tote No. 04', category: 'Bags', price: '3600', description: 'A sturdy carryall made for the long way home.', image: 'photo-1590874103328-eac38a683ce7' },
+  { id: 3, name: 'Botanical Study Print', category: 'Paintings', price: '4700', description: 'Archival ink on softly textured cotton paper.', image: 'photo-1579783902614-a3fb3927b6a5', badge: 'Small batch' },
   { id: 4, name: 'Form Candle, No. 2', category: 'Home', price: '3100', description: 'Cedar, fig leaf, and a little room to breathe.', image: 'photo-1603006905003-be475563bc59' },
-  { id: 5, name: 'Ridge Glass Carafe', category: 'Home', price: '6200', description: 'Recycled glass with a satisfying, weighty feel.', image: 'photo-1514228742587-6b1558fcca3d' },
+  { id: 5, name: 'Ridge Glass Carafe', category: 'Utensils', price: '6200', description: 'Recycled glass with a satisfying, weighty feel.', image: 'photo-1514228742587-6b1558fcca3d' },
   { id: 6, name: 'Softline Scarf', category: 'Accessories', price: '7500', description: 'Light merino, woven close and finished by hand.', image: 'photo-1601924994987-69e26d50dc26' },
+  { id: 7, name: 'EcoBlend Blender', category: 'Electric Appliances', price: '18400', description: 'Powerful, quiet, and built for daily kitchen routines.', image: 'photo-1585518419759-7fe2e0fbf8a6', badge: 'Hot pick' },
+  { id: 8, name: 'Summit Runner', category: 'Shoes', price: '12800', description: 'Cushioned support for city walks and easy weekend miles.', image: 'photo-1542291026-7eec264c27ff' },
+  { id: 9, name: 'Harbor Chronograph', category: 'Watches', price: '21500', description: 'A sleek everyday watch with a polished steel finish.', image: 'photo-1523170335258-f5ed11844a49' },
+  { id: 10, name: 'Atlas Leather Belt', category: 'Belts', price: '6400', description: 'Structured leather with a clean profile and a generous fit.', image: 'photo-1521572267360-ee0c2909d518' },
+  { id: 11, name: 'Aster Laptop 14', category: 'Laptops', price: '68500', description: 'Compact performance for work, study, and creative days.', image: 'photo-1496181133206-80ce9b88a853' },
+  { id: 12, name: 'Pulse Pro Phone', category: 'Phones', price: '54200', description: 'Bright display, all-day battery, and dependable everyday speed.', image: 'photo-1511707171634-5f897ff02aa9' },
+  { id: 13, name: 'Cinder Line Drawing', category: 'Drawings', price: '9300', description: 'Fine-line black ink on archival stock for a studio wall.', image: 'photo-1515405295579-ba7b45403062' },
+  { id: 14, name: 'Coastal Canvas', category: 'Paintings', price: '17600', description: 'A layered landscape with a warm, modern minimal palette.', image: 'photo-1460661419201-fd4cecdf8a8b' },
+  { id: 15, name: 'Copper Cook Set', category: 'Utensils', price: '8900', description: 'Balanced tools for slow cooking and easy serving.', image: 'photo-1582515073490-39981397c445' },
+  { id: 16, name: 'Peak Motion Tee', category: 'Sportswear', price: '5400', description: 'Lightweight, breathable, and made for movement.', image: 'photo-1521572163474-6864f9cf17ab' },
+  { id: 17, name: 'Trail Pro Kit', category: 'Sports Equipment', price: '24600', description: 'A practical starter set for outdoor training and weekend sessions.', image: 'photo-1517836357463-d25dfeac3438' },
+  { id: 18, name: 'Studio Case Set', category: 'Accessories', price: '7800', description: 'Travel-ready organizers for daily carry and quick packing.', image: 'photo-1525966222134-fcfa99b8ae77' },
 ]
 
-const categories = ['All finds', 'Home', 'Accessories', 'Art']
+const categories = ['All finds', 'Home', 'Accessories', 'Electric Appliances', 'Shoes', 'Watches', 'Bags', 'Belts', 'Laptops', 'Phones', 'Drawings', 'Paintings', 'Utensils', 'Sportswear', 'Sports Equipment']
 const previewCatalog = previewProducts.map((product) => ({ ...product, previewOnly: true }))
 const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend.vercel.app'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
