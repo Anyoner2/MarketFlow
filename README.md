@@ -37,12 +37,16 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `GET, PATCH /api/stores/<id>/` retrieves or updates one of the current user's stores.
 - `GET, POST /api/seller/products/` lists or creates products in stores owned by the current user.
 - `GET, PATCH, DELETE /api/seller/products/<id>/` manages one of the current user's products.
+- `GET /api/seller/orders/` lists paid order items from stores owned by the current user.
+- `PATCH /api/seller/order-items/<id>/` advances an owned paid item through processing, shipped, and delivered.
+- `GET /api/seller/dashboard/` returns listing, paid-order, sales, and fulfillment counts for the current user.
 - `GET /api/orders/` lists the current user's orders.
 - `POST /api/orders/checkout/` validates inventory and starts an M-Pesa STK Push for the current user's order.
 - `POST /api/payments/mpesa/callback/` receives Daraja payment confirmations.
 - `GET /api/orders/<id>/` retrieves one of the current user's orders.
 
 Customers can view order/payment progress in **My orders**. Product reviews are limited to one per customer and product, and can only be submitted after a successful purchase.
+Sellers can review paid orders and sales totals in Seller Studio. Fulfillment updates are scoped to the seller's own order items and must follow the processing → shipped → delivered sequence; customer order tracking reflects item fulfillment progress.
 
 Authenticated requests send `Authorization: Bearer <access-token>`. Access tokens last 15 minutes; refresh tokens last 30 days.
 

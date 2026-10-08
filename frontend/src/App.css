@@ -133,6 +133,10 @@ main { overflow: hidden; }
 .seller-header .eyebrow { margin-bottom: 8px; }
 .seller-header h2 { margin: 0; color: #213f68; font: 500 40px/1.05 var(--display); }
 .seller-close { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid #d9d8cf; background: transparent; color: #555b50; font-size: 24px; cursor: pointer; }
+.seller-dashboard { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; padding: 19px 0 0; }
+.seller-dashboard article { display: grid; gap: 8px; min-width: 0; border: 1px solid #e1e1d8; padding: 12px; background: #fffefa; }
+.seller-dashboard article span { color: #77796f; font: 8px/1.2 var(--sans); letter-spacing: .7px; }
+.seller-dashboard article strong { overflow-wrap: anywhere; color: #213f68; font: 500 20px/1.1 var(--display); }
 .seller-section { padding: 24px 0; border-bottom: 1px solid #deded5; }
 .seller-section h3 { margin: 0 0 17px; color: #354036; font: 500 19px/1.2 var(--display); }
 .seller-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; align-items: end; }
@@ -159,6 +163,16 @@ main { overflow: hidden; }
 .seller-product-actions button:disabled { opacity: .55; cursor: wait; }
 .seller-product-actions .seller-delete { border-color: #dfc8bc; color: #9b543c; }
 .seller-product-actions .seller-delete:hover { border-color: #9b543c; }
+.seller-order { border-top: 1px solid #e5e3da; padding: 14px 0; }
+.seller-order > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; color: #213f68; font: 11px/1.4 var(--sans); }
+.seller-order > header > div { display: grid; gap: 4px; min-width: 0; }
+.seller-order > header strong { overflow-wrap: anywhere; }
+.seller-order > header span { color: #73776c; font-size: 9px; }
+.seller-order > header > b { flex: 0 0 auto; font-weight: 500; }
+.seller-order-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 10px; color: #555b50; font: 10px/1.4 var(--sans); }
+.seller-order-item em, .customer-order-items em { margin-left: 5px; color: #8a694c; font-size: 9px; font-style: normal; text-transform: capitalize; }
+.seller-order-item button { flex: 0 0 auto; min-height: 30px; border: 1px solid #c9cec2; padding: 0 9px; background: transparent; color: #33483c; font: 9px/1 var(--sans); cursor: pointer; text-transform: capitalize; }
+.seller-order-item button:disabled { opacity: .55; cursor: wait; }
 .header-actions .text-action { white-space: nowrap; }
 @keyframes arrive { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 
@@ -207,6 +221,7 @@ main { overflow: hidden; }
   .seller-form { grid-template-columns: 1fr; gap: 13px; }
   .seller-wide { grid-column: auto; }
   .seller-store-bar label { width: 65%; }
+  .seller-dashboard { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .seller-product { align-items: flex-start; flex-direction: column; gap: 11px; }
   .seller-product-actions { width: 100%; }
   .seller-product-actions button { flex: 1; min-height: 38px; }

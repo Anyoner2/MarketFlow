@@ -81,8 +81,11 @@ const schema = `
     product_id BIGINT NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
     unit_price NUMERIC(10, 2) NOT NULL CHECK (unit_price >= 0),
+    fulfillment_status VARCHAR(20) NOT NULL DEFAULT 'pending'
+      CHECK (fulfillment_status IN ('pending', 'processing', 'shipped', 'delivered')),
     UNIQUE (order_id, product_id)
   );
+  ALTER TABLE order_items ADD COLUMN IF NOT EXISTS fulfillment_status VARCHAR(20) NOT NULL DEFAULT 'pending';
 
   CREATE TABLE IF NOT EXISTS product_reviews (
     id BIGSERIAL PRIMARY KEY,

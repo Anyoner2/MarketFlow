@@ -118,6 +118,7 @@ async function getOrder(client, orderId, customerId) {
   const order = orderResult.rows[0];
   const itemResult = await client.query(
     `SELECT oi.id, oi.product_id AS product, p.name AS product_name, oi.quantity, oi.unit_price,
+            oi.fulfillment_status,
             (o.payment_status = 'paid' AND NOT EXISTS (
               SELECT 1 FROM product_reviews pr
               WHERE pr.product_id = oi.product_id AND pr.customer_id = o.customer_id
@@ -126,6 +127,44 @@ async function getOrder(client, orderId, customerId) {
      JOIN orders o ON o.id = oi.order_id
      WHERE oi.order_id = $1 ORDER BY oi.id`,
     [order.id],
+  );
+  const items = itemResult.rows.map((item) => ({ ...item, unit_price: String(item.unit_price) }));
+  const total = items.reduce((sum, item) => sum + Number(item.unit_price) * item.quantity, 0);
+  let status = order.status;
+  if (order.payment_status === 'paid') {
+    const allDelivered = items.every((item) => item.fulfillment_status === 'delivered');
+    const allShipped = items.every((item) => ['shipped', 'delivered'].includes(item.fulfillment_status));
+    const anyProcessing = items.some((item) => ['processing', 'shipped', 'delivered'].includes(item.fulfillment_status));
+    status = allDelivered ? 'delivered' : allShipped ? 'shipped' : anyProcessing ? 'processing' : 'paid';
+  }
+  return { ...order, status, items, total_amount: total.toFixed(2) };
+}
+
+async function getSellerOrder(client, orderId, sellerId) {
+  const orderResult = await client.query(
+    `SELECT o.id, o.order_number, o.created_at, u.first_name AS customer_name
+     FROM orders o
+     JOIN users u ON u.id = o.customer_id
+     WHERE o.id = $1 AND o.payment_status = 'paid'
+       AND EXISTS (
+         SELECT 1 FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         JOIN stores s ON s.id = p.store_id
+         WHERE oi.order_id = o.id AND s.owner_id = $2
+       )`,
+    [orderId, sellerId],
+  );
+  if (!orderResult.rowCount) return null;
+  const order = orderResult.rows[0];
+  const itemResult = await client.query(
+    `SELECT oi.id, oi.product_id AS product, p.name AS product_name,
+            oi.quantity, oi.unit_price, oi.fulfillment_status
+     FROM order_items oi
+     JOIN products p ON p.id = oi.product_id
+     JOIN stores s ON s.id = p.store_id
+     WHERE oi.order_id = $1 AND s.owner_id = $2
+     ORDER BY oi.id`,
+    [orderId, sellerId],
   );
   const items = itemResult.rows.map((item) => ({ ...item, unit_price: String(item.unit_price) }));
   const total = items.reduce((sum, item) => sum + Number(item.unit_price) * item.quantity, 0);
@@ -337,6 +376,108 @@ app.get('/api/seller/products/', authenticate, async (req, res, next) => {
       [req.user.id],
     );
     res.json(result.rows.map(productResponse));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/seller/dashboard/', authenticate, async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT
+         COUNT(DISTINCT p.id) FILTER (WHERE p.is_active = TRUE) AS active_products,
+         COUNT(DISTINCT o.id) FILTER (WHERE o.payment_status = 'paid') AS paid_orders,
+         COALESCE(SUM(oi.quantity) FILTER (WHERE o.payment_status = 'paid'), 0) AS items_sold,
+         COALESCE(SUM(oi.unit_price * oi.quantity) FILTER (WHERE o.payment_status = 'paid'), 0) AS gross_sales,
+         COUNT(oi.id) FILTER (WHERE o.payment_status = 'paid' AND oi.fulfillment_status = 'pending') AS pending_fulfillment
+       FROM stores s
+       LEFT JOIN products p ON p.store_id = s.id
+       LEFT JOIN order_items oi ON oi.product_id = p.id
+       LEFT JOIN orders o ON o.id = oi.order_id
+       WHERE s.owner_id = $1`,
+      [req.user.id],
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/seller/orders/', authenticate, async (req, res, next) => {
+  try {
+    await ensureSchema();
+  } catch (error) {
+    return next(error);
+  }
+  const client = await pool.connect().catch(next);
+  if (!client) return;
+  try {
+    const result = await client.query(
+      `SELECT o.id
+       FROM orders o
+       JOIN order_items oi ON oi.order_id = o.id
+       JOIN products p ON p.id = oi.product_id
+       JOIN stores s ON s.id = p.store_id
+       WHERE s.owner_id = $1 AND o.payment_status = 'paid'
+       GROUP BY o.id ORDER BY MAX(o.created_at) DESC`,
+      [req.user.id],
+    );
+    const orders = [];
+    for (const row of result.rows) {
+      const order = await getSellerOrder(client, row.id, req.user.id);
+      if (order) orders.push(order);
+    }
+    res.json(orders);
+  } catch (error) {
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.patch('/api/seller/order-items/:id/', authenticate, async (req, res, next) => {
+  const transitions = { pending: 'processing', processing: 'shipped', shipped: 'delivered' };
+  try {
+    const itemId = parseId(req.params.id);
+    const { status } = req.body || {};
+    if (!['processing', 'shipped', 'delivered'].includes(status)) {
+      throw apiError(400, 'Choose a valid fulfillment status.', 'status');
+    }
+
+    await ensureSchema();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const currentResult = await client.query(
+        `SELECT oi.fulfillment_status, o.payment_status
+         FROM order_items oi
+         JOIN products p ON p.id = oi.product_id
+         JOIN stores s ON s.id = p.store_id
+         JOIN orders o ON o.id = oi.order_id
+         WHERE oi.id = $1 AND s.owner_id = $2
+         FOR UPDATE OF oi`,
+        [itemId, req.user.id],
+      );
+      if (!currentResult.rowCount) throw apiError(404, 'Order item not found.');
+      const current = currentResult.rows[0];
+      if (current.payment_status !== 'paid') throw apiError(400, 'Only paid orders can be fulfilled.');
+      if (transitions[current.fulfillment_status] !== status) {
+        throw apiError(409, `This item must move from ${current.fulfillment_status} to ${transitions[current.fulfillment_status] || 'no further status'}.`);
+      }
+
+      const result = await client.query(
+        `UPDATE order_items SET fulfillment_status = $1 WHERE id = $2
+         RETURNING id, fulfillment_status`,
+        [status, itemId],
+      );
+      await client.query('COMMIT');
+      res.json(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
   } catch (error) {
     next(error);
   }

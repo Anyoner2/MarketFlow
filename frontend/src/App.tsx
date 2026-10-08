@@ -37,6 +37,7 @@ type CustomerOrder = {
     product_name: string
     quantity: number
     unit_price: string
+    fulfillment_status: string
     can_review: boolean
   }>
 }
@@ -443,7 +444,7 @@ function App() {
                     {['Confirmed', 'Preparing', 'On the way', 'Delivered'].map((stage, index) => <span className={index <= currentStage ? 'complete' : ''} key={stage}>{stage}</span>)}
                   </div> : <p className="order-tracking-message">{order.payment_status === 'pending' ? 'Complete the M-Pesa prompt to confirm this order.' : order.payment_status === 'failed' ? order.payment_result_description || 'Payment was not completed.' : `Order status: ${statusLabel}.`}</p>}
                   <div className="customer-order-items">{order.items.map((item) => <div key={item.id}>
-                    <span>{item.product_name} × {item.quantity}</span>
+                    <span>{item.product_name} × {item.quantity} <em>{item.fulfillment_status}</em></span>
                     {item.can_review && <button type="button" onClick={() => {
                       const product = products.find((entry) => entry.id === item.product)
                       if (product) void openReviews(product, true)

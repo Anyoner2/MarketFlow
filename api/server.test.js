@@ -46,6 +46,26 @@ test('creating a product review requires authentication', async () => {
   assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
 });
 
+test('seller order and dashboard endpoints require authentication', async () => {
+  const ordersResponse = await fetch(`${baseUrl}/api/seller/orders/`);
+  assert.equal(ordersResponse.status, 401);
+  assert.deepEqual(await ordersResponse.json(), { detail: 'Authentication credentials were not provided.' });
+
+  const dashboardResponse = await fetch(`${baseUrl}/api/seller/dashboard/`);
+  assert.equal(dashboardResponse.status, 401);
+  assert.deepEqual(await dashboardResponse.json(), { detail: 'Authentication credentials were not provided.' });
+});
+
+test('seller fulfillment updates require authentication', async () => {
+  const response = await fetch(`${baseUrl}/api/seller/order-items/1/`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'shipped' }),
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
+});
+
 test('checkout rejects unauthenticated requests before touching the database', async () => {
   const response = await fetch(`${baseUrl}/api/orders/checkout/`, {
     method: 'POST',

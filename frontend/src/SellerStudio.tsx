@@ -20,6 +20,37 @@ type SellerProduct = {
   is_active: boolean
 }
 
+type SellerOrder = {
+  id: number
+  order_number: string
+  customer_name: string
+  created_at: string
+  total_amount: string
+  items: Array<{
+    id: number
+    product: number
+    product_name: string
+    quantity: number
+    unit_price: string
+    fulfillment_status: 'pending' | 'processing' | 'shipped' | 'delivered'
+  }>
+}
+
+type SellerDashboard = {
+  active_products: number
+  paid_orders: number
+  items_sold: number
+  gross_sales: string
+  pending_fulfillment: number
+}
+
+const nextFulfillmentStatus: Record<SellerOrder['items'][number]['fulfillment_status'], 'processing' | 'shipped' | 'delivered' | null> = {
+  pending: 'processing',
+  processing: 'shipped',
+  shipped: 'delivered',
+  delivered: null,
+}
+
 type SellerStudioProps = {
   apiBaseUrl: string
   token: string
@@ -60,6 +91,8 @@ function slugify(value: string) {
 function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }: SellerStudioProps) {
   const [stores, setStores] = useState<Store[]>([])
   const [products, setProducts] = useState<SellerProduct[]>([])
+  const [sellerOrders, setSellerOrders] = useState<SellerOrder[]>([])
+  const [dashboard, setDashboard] = useState<SellerDashboard | null>(null)
   const [selectedStoreId, setSelectedStoreId] = useState('')
   const [storeName, setStoreName] = useState('')
   const [storeSlug, setStoreSlug] = useState('')
@@ -72,18 +105,23 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
   const [productImageUrl, setProductImageUrl] = useState('')
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [updatingOrderItemId, setUpdatingOrderItemId] = useState<number | null>(null)
 
   useEffect(() => {
     let active = true
     Promise.all([
       apiRequest(apiBaseUrl, token, '/api/stores/'),
       apiRequest(apiBaseUrl, token, '/api/seller/products/'),
+      apiRequest(apiBaseUrl, token, '/api/seller/orders/'),
+      apiRequest(apiBaseUrl, token, '/api/seller/dashboard/'),
     ])
-      .then(([storeData, productData]) => {
+      .then(([storeData, productData, orderData, dashboardData]) => {
         if (!active) return
         const loadedStores = storeData as Store[]
         setStores(loadedStores)
         setProducts(productData as SellerProduct[])
+        setSellerOrders(orderData as SellerOrder[])
+        setDashboard(dashboardData as SellerDashboard)
         setSelectedStoreId((current) => current || (loadedStores[0] ? String(loadedStores[0].id) : ''))
       })
       .catch((error: unknown) => {
@@ -94,6 +132,35 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
       })
     return () => { active = false }
   }, [apiBaseUrl, token, onNotice])
+
+  async function refreshDashboard() {
+    const data = await apiRequest(apiBaseUrl, token, '/api/seller/dashboard/')
+    setDashboard(data as SellerDashboard)
+  }
+
+  async function advanceOrderItem(item: SellerOrder['items'][number]) {
+    const nextStatus = nextFulfillmentStatus[item.fulfillment_status]
+    if (!nextStatus) return
+    setUpdatingOrderItemId(item.id)
+    try {
+      await apiRequest(apiBaseUrl, token, `/api/seller/order-items/${item.id}/`, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: nextStatus }),
+      })
+      setSellerOrders((current) => current.map((order) => ({
+        ...order,
+        items: order.items.map((orderItem) => orderItem.id === item.id
+          ? { ...orderItem, fulfillment_status: nextStatus }
+          : orderItem),
+      })))
+      await refreshDashboard()
+      onNotice(`Order item marked ${nextStatus}.`)
+    } catch (error) {
+      onNotice(error instanceof Error ? error.message : 'Could not update order status.')
+    } finally {
+      setUpdatingOrderItemId(null)
+    }
+  }
 
   async function createStore(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -139,6 +206,7 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
       setProductStock('0')
       setProductDescription('')
       setProductImageUrl('')
+      await refreshDashboard()
       await onCatalogChanged()
       onNotice('Your listing is live.')
     } catch (error) {
@@ -156,6 +224,7 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
         body: JSON.stringify({ is_active: !product.is_active }),
       }) as SellerProduct
       setProducts((current) => current.map((item) => item.id === updated.id ? updated : item))
+      await refreshDashboard()
       await onCatalogChanged()
       onNotice(updated.is_active ? 'Listing published.' : 'Listing paused.')
     } catch (error) {
@@ -171,6 +240,7 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
     try {
       await apiRequest(apiBaseUrl, token, `/api/seller/products/${product.id}/`, { method: 'DELETE' })
       setProducts((current) => current.filter((item) => item.id !== product.id))
+      await refreshDashboard()
       await onCatalogChanged()
       onNotice('Listing removed.')
     } catch (error) {
@@ -205,6 +275,30 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
           </section>
         ) : (
           <>
+            {dashboard && <section className="seller-dashboard" aria-label="Sales dashboard">
+              <article><span>ACTIVE LISTINGS</span><strong>{dashboard.active_products}</strong></article>
+              <article><span>PAID ORDERS</span><strong>{dashboard.paid_orders}</strong></article>
+              <article><span>ITEMS SOLD</span><strong>{dashboard.items_sold}</strong></article>
+              <article><span>GROSS SALES</span><strong>KSh {Number(dashboard.gross_sales).toLocaleString('en-KE')}</strong></article>
+              <article><span>TO FULFILL</span><strong>{dashboard.pending_fulfillment}</strong></article>
+            </section>}
+            <section className="seller-section seller-listings">
+              <h3>Customer orders</h3>
+              {sellerOrders.length === 0 ? <p className="seller-empty">Paid orders for your products will appear here.</p> : sellerOrders.map((order) => (
+                <article className="seller-order" key={order.id}>
+                  <header><div><strong>{order.order_number}</strong><span>{order.customer_name || 'Customer'} · {new Date(order.created_at).toLocaleDateString()}</span></div><b>KSh {Number(order.total_amount).toLocaleString('en-KE')}</b></header>
+                  {order.items.map((item) => {
+                    const nextStatus = nextFulfillmentStatus[item.fulfillment_status]
+                    return <div className="seller-order-item" key={item.id}>
+                      <span>{item.product_name} × {item.quantity} <em>{item.fulfillment_status}</em></span>
+                      {nextStatus && <button type="button" disabled={updatingOrderItemId !== null} onClick={() => void advanceOrderItem(item)}>
+                        {updatingOrderItemId === item.id ? 'Updating…' : `Mark ${nextStatus}`}
+                      </button>}
+                    </div>
+                  })}
+                </article>
+              ))}
+            </section>
             <div className="seller-store-bar">
               <label>Store<select value={selectedStoreId} onChange={(event) => setSelectedStoreId(event.target.value)}>
                 {stores.map((store) => <option key={store.id} value={store.id}>{store.name}</option>)}
