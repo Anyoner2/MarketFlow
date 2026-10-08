@@ -66,6 +66,35 @@ test('seller fulfillment updates require authentication', async () => {
   assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
 });
 
+test('admin management endpoints require authentication', async () => {
+  const paths = [
+    '/api/admin/summary/',
+    '/api/admin/users/',
+    '/api/admin/categories/',
+    '/api/admin/orders/',
+    '/api/admin/products/',
+  ];
+  for (const path of paths) {
+    const response = await fetch(`${baseUrl}${path}`);
+    assert.equal(response.status, 401, `${path} should require authentication`);
+    assert.deepEqual(await response.json(), { detail: 'Authentication credentials were not provided.' });
+  }
+});
+
+test('seller application and admin bootstrap require authentication', async () => {
+  const application = await fetch(`${baseUrl}/api/seller/apply/`, { method: 'POST' });
+  assert.equal(application.status, 401);
+  assert.deepEqual(await application.json(), { detail: 'Authentication credentials were not provided.' });
+
+  const bootstrap = await fetch(`${baseUrl}/api/admin/bootstrap/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ setup_token: 'anything' }),
+  });
+  assert.equal(bootstrap.status, 401);
+  assert.deepEqual(await bootstrap.json(), { detail: 'Authentication credentials were not provided.' });
+});
+
 test('checkout rejects unauthenticated requests before touching the database', async () => {
   const response = await fetch(`${baseUrl}/api/orders/checkout/`, {
     method: 'POST',

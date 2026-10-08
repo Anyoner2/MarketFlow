@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import './App.css'
+import AdminStudio from './AdminStudio'
 import SellerStudio from './SellerStudio'
 
 type Product = {
@@ -87,7 +88,11 @@ function App() {
   const [registering, setRegistering] = useState(false)
   const [notice, setNotice] = useState('')
   const [token, setToken] = useState(() => localStorage.getItem('marketflow_access'))
+  const [userRole, setUserRole] = useState<'customer' | 'seller' | 'admin' | null>(null)
+  const [sellerRequested, setSellerRequested] = useState(false)
+  const [canBootstrapAdmin, setCanBootstrapAdmin] = useState(false)
   const [sellerStudioOpen, setSellerStudioOpen] = useState(false)
+  const [adminStudioOpen, setAdminStudioOpen] = useState(false)
   const cartCount = Object.values(cart).reduce((total, quantity) => total + quantity, 0)
 
   async function refreshCatalog() {
@@ -164,6 +169,51 @@ function App() {
       setReviewSubmitting(false)
     }
   }
+
+  async function applyToSell() {
+    if (!token) {
+      setAuthOpen(true)
+      setRegistering(false)
+      return
+    }
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/seller/apply/`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not submit seller application.')
+      setSellerRequested(true)
+      setNotice('Seller application submitted for admin approval.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not submit seller application.')
+    }
+  }
+
+  useEffect(() => {
+    if (!token) return
+    let active = true
+    void fetch(`${apiBaseUrl}/api/auth/me/`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(async (response) => {
+        const user = await response.json()
+        if (!response.ok) throw new Error(user.detail || 'Could not load account.')
+        if (active) {
+          setUserRole(user.role)
+          setSellerRequested(user.seller_requested)
+          setCanBootstrapAdmin(Boolean(user.can_bootstrap_admin))
+        }
+      })
+      .catch(() => {
+        if (active) {
+          localStorage.removeItem('marketflow_access')
+          setToken(null)
+          setUserRole(null)
+          setSellerRequested(false)
+          setCanBootstrapAdmin(false)
+        }
+      })
+    return () => { active = false }
+  }, [token])
 
   useEffect(() => {
     let active = true
@@ -248,6 +298,8 @@ function App() {
       if (data.access) {
         localStorage.setItem('marketflow_access', data.access)
         setToken(data.access)
+        setUserRole(data.user.role)
+        setSellerRequested(Boolean(data.user.seller_requested))
       }
       setAuthOpen(false)
       setNotice(registering ? 'Your account is ready.' : 'Welcome back.')
@@ -259,8 +311,35 @@ function App() {
   function signOut() {
     localStorage.removeItem('marketflow_access')
     setToken(null)
+    setUserRole(null)
+    setSellerRequested(false)
+    setCanBootstrapAdmin(false)
     setSellerStudioOpen(false)
+    setAdminStudioOpen(false)
     setNotice('You have signed out.')
+  }
+
+  async function bootstrapAdmin() {
+    const setupToken = window.prompt('Enter the one-time admin setup token configured in Vercel.')
+    if (!setupToken || !token) return
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/admin/bootstrap/`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ setup_token: setupToken }),
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.detail || 'Could not activate admin access.')
+      setUserRole('admin')
+      setSellerRequested(false)
+      setCanBootstrapAdmin(false)
+      setNotice('Admin access is active.')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'Could not activate admin access.')
+    }
   }
 
   async function checkout(event: React.FormEvent<HTMLFormElement>) {
@@ -319,11 +398,16 @@ function App() {
             <a href="#discover" onClick={() => setActiveCategory('Accessories')}>Accessories</a>
           </nav>
           <div className="header-actions">
-            {token ? <>
+            {userRole === 'admin' && <button className="text-action" onClick={() => setAdminStudioOpen(true)}>Admin</button>}
+            {canBootstrapAdmin && <button className="text-action" onClick={() => void bootstrapAdmin()}>Set up admin</button>}
+            {userRole === 'seller' ? <>
               <button className="text-action" onClick={() => void openOrders()}>My orders</button>
               <button className="text-action" onClick={() => setSellerStudioOpen(true)}>Seller studio</button>
-              <button className="text-action" onClick={signOut}>Sign out</button>
-            </> : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
+            </> : token && userRole === 'customer' ? <>
+              <button className="text-action" onClick={() => void openOrders()}>My orders</button>
+              <button className="text-action" disabled={sellerRequested} onClick={() => void applyToSell()}>{sellerRequested ? 'Seller review pending' : 'Apply to sell'}</button>
+            </> : token && userRole === 'admin' ? <button className="text-action" onClick={() => void openOrders()}>My orders</button> : token ? null : <button className="text-action" onClick={() => setAuthOpen(true)}>Sign in</button>}
+            {token && <button className="text-action" onClick={signOut}>Sign out</button>}
             <button className="cart-button" aria-label={`Shopping bag with ${cartCount} items`} onClick={() => setCartOpen(true)}>
               <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8h14l1 13H4L5 8Z"/><path d="M9 9V6a3 3 0 0 1 6 0v3"/></svg>
               <span>Bag <b>{cartCount}</b></span>
@@ -490,11 +574,17 @@ function App() {
             <button className="switch-auth" onClick={() => setRegistering((value) => !value)}>{registering ? 'Already have an account? Sign in' : 'New around here? Create an account'}</button>
           </section>
         </div>}
-        {sellerStudioOpen && token && <SellerStudio
+        {sellerStudioOpen && token && userRole === 'seller' && <SellerStudio
           apiBaseUrl={apiBaseUrl}
           token={token}
           onClose={() => setSellerStudioOpen(false)}
           onCatalogChanged={refreshCatalog}
+          onNotice={setNotice}
+        />}
+        {adminStudioOpen && token && userRole === 'admin' && <AdminStudio
+          apiBaseUrl={apiBaseUrl}
+          token={token}
+          onClose={() => setAdminStudioOpen(false)}
           onNotice={setNotice}
         />}
       </main>

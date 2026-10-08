@@ -141,9 +141,9 @@ main { overflow: hidden; }
 .seller-section h3 { margin: 0 0 17px; color: #354036; font: 500 19px/1.2 var(--display); }
 .seller-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px 18px; align-items: end; }
 .seller-form label, .seller-store-bar label { display: grid; gap: 7px; color: #555b50; font: 10px/1.3 var(--sans); }
-.seller-form input, .seller-form textarea, .seller-store-bar select { width: 100%; min-height: 42px; border: 1px solid #d9d8cf; border-radius: 0; padding: 10px 11px; background: #fffefa; color: #213f68; font: 12px/1.4 var(--sans); }
+.seller-form input, .seller-form textarea, .seller-form select, .seller-store-bar select { width: 100%; min-height: 42px; border: 1px solid #d9d8cf; border-radius: 0; padding: 10px 11px; background: #fffefa; color: #213f68; font: 12px/1.4 var(--sans); }
 .seller-form textarea { min-height: 68px; resize: vertical; }
-.seller-form input:focus, .seller-form textarea:focus, .seller-store-bar select:focus { border-color: #bd704e; outline: 2px solid #bd704e55; outline-offset: 1px; }
+.seller-form input:focus, .seller-form textarea:focus, .seller-form select:focus, .seller-store-bar select:focus { border-color: #bd704e; outline: 2px solid #bd704e55; outline-offset: 1px; }
 .seller-wide { grid-column: 1 / -1; }
 .seller-form > .dark-button { min-height: 42px; }
 .seller-store-bar { display: flex; align-items: end; justify-content: space-between; gap: 18px; padding: 20px 0 0; }

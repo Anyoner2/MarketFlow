@@ -30,11 +30,15 @@ function apiError(status, message, field) {
 }
 
 function issueTokens(user) {
-  const claims = { sub: String(user.id), email: user.email, first_name: user.first_name };
+  const claims = { sub: String(user.id), email: user.email, first_name: user.first_name, role: user.role || 'customer' };
   return {
     access: jwt.sign(claims, jwtSecret, { expiresIn: accessLifetime }),
     refresh: jwt.sign({ sub: claims.sub, type: 'refresh' }, refreshSecret, { expiresIn: refreshLifetime }),
   };
+}
+
+function adminEmails() {
+  return new Set((process.env.ADMIN_EMAILS || '').split(',').map((email) => email.trim().toLowerCase()).filter(Boolean));
 }
 
 function authenticate(req, res, next) {
@@ -44,14 +48,34 @@ function authenticate(req, res, next) {
     return res.status(401).json({ detail: 'Authentication credentials were not provided.' });
   }
 
+  let payload;
   try {
-    const payload = jwt.verify(token, jwtSecret);
+    payload = jwt.verify(token, jwtSecret);
     if (payload.type === 'refresh') throw new Error('Refresh token is not an access token.');
-    req.user = { id: Number(payload.sub), email: payload.email, first_name: payload.first_name || '' };
-    return next();
   } catch {
     return res.status(401).json({ detail: 'Invalid or expired access token.' });
   }
+
+  void query(
+    'SELECT id, email, first_name, role, is_active, seller_requested FROM users WHERE id = $1',
+    [Number(payload.sub)],
+  ).then((result) => {
+    const user = result.rows[0];
+    if (!user || !user.is_active) {
+      return res.status(401).json({ detail: 'This account is unavailable.' });
+    }
+    req.user = user;
+    return next();
+  }).catch(next);
+}
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !roles.includes(req.user.role)) {
+      return res.status(403).json({ detail: 'You do not have permission to perform this action.' });
+    }
+    return next();
+  };
 }
 
 function parseId(value) {
@@ -99,6 +123,7 @@ function productResponse(row) {
     image_url: row.image_url,
     stock_quantity: row.stock_quantity,
     is_active: row.is_active,
+    is_suspended: row.is_suspended || false,
     store_id: row.store_id,
     average_rating: row.average_rating === null || row.average_rating === undefined ? null : Number(row.average_rating),
     review_count: Number(row.review_count || 0),
@@ -187,11 +212,13 @@ app.get('/api/products/', async (req, res, next) => {
       `SELECT p.*, p.store_id, review_stats.average_rating, COALESCE(review_stats.review_count, 0) AS review_count
        FROM products p
        JOIN stores s ON s.id = p.store_id
+       JOIN users u ON u.id = s.owner_id AND u.is_active = TRUE
        LEFT JOIN (
          SELECT product_id, ROUND(AVG(rating)::numeric, 1) AS average_rating, COUNT(*) AS review_count
          FROM product_reviews GROUP BY product_id
        ) review_stats ON review_stats.product_id = p.id
        WHERE p.is_active = TRUE AND s.is_active = TRUE
+         AND p.is_suspended = FALSE
        ORDER BY p.created_at DESC`,
     );
     res.json(result.rows.map(productResponse));
@@ -208,10 +235,20 @@ app.get('/api/products/:id/reviews/', async (req, res, next) => {
        FROM product_reviews pr JOIN users u ON u.id = pr.customer_id
        JOIN products p ON p.id = pr.product_id
        JOIN stores s ON s.id = p.store_id
-       WHERE pr.product_id = $1 AND p.is_active = TRUE AND s.is_active = TRUE
+       JOIN users seller ON seller.id = s.owner_id AND seller.is_active = TRUE
+       WHERE pr.product_id = $1 AND p.is_active = TRUE AND p.is_suspended = FALSE AND s.is_active = TRUE
        ORDER BY pr.created_at DESC`,
       [productId],
     );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/categories/', async (req, res, next) => {
+  try {
+    const result = await query('SELECT id, name FROM categories ORDER BY LOWER(name)');
     res.json(result.rows);
   } catch (error) {
     next(error);
@@ -262,7 +299,8 @@ app.post('/api/auth/register/', async (req, res, next) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await query(
-      'INSERT INTO users (email, first_name, password_hash) VALUES ($1, $2, $3) RETURNING id, email, first_name',
+      `INSERT INTO users (email, first_name, password_hash)
+       VALUES ($1, $2, $3) RETURNING id, email, first_name, role, is_active, seller_requested`,
       [normalizedEmail, first_name, passwordHash],
     );
     res.status(201).json({ ...issueTokens(result.rows[0]), user: result.rows[0] });
@@ -277,12 +315,99 @@ app.post('/api/auth/login/', async (req, res, next) => {
     const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     const password = req.body?.password;
     if (!email || typeof password !== 'string') throw apiError(400, 'Email and password are required.');
-    const result = await query('SELECT id, email, first_name, password_hash FROM users WHERE LOWER(email) = LOWER($1)', [email]);
+    const result = await query(
+      'SELECT id, email, first_name, password_hash, role, is_active, seller_requested FROM users WHERE LOWER(email) = LOWER($1)',
+      [email],
+    );
     const user = result.rows[0];
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       throw apiError(401, 'Invalid email or password.');
     }
-    res.json({ ...issueTokens(user), user: { id: user.id, email: user.email, first_name: user.first_name } });
+    if (!user.is_active) throw apiError(401, 'This account is unavailable.');
+    const publicUser = {
+      id: user.id,
+      email: user.email,
+      first_name: user.first_name,
+      role: user.role,
+      seller_requested: user.seller_requested,
+    };
+    res.json({ ...issueTokens(user), user: publicUser });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/auth/me/', authenticate, async (req, res, next) => {
+  try {
+    const bootstrapConfigured = Boolean(process.env.ADMIN_BOOTSTRAP_TOKEN);
+    const isAllowlisted = adminEmails().has(req.user.email.toLowerCase());
+    let canBootstrapAdmin = false;
+    if (bootstrapConfigured && isAllowlisted && req.user.role !== 'admin') {
+      const admins = await query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = TRUE");
+      canBootstrapAdmin = Number(admins.rows[0].count) === 0;
+    }
+    res.json({
+      id: req.user.id,
+      email: req.user.email,
+      first_name: req.user.first_name,
+      role: req.user.role,
+      seller_requested: req.user.seller_requested,
+      can_bootstrap_admin: canBootstrapAdmin,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/bootstrap/', authenticate, async (req, res, next) => {
+  const configuredToken = process.env.ADMIN_BOOTSTRAP_TOKEN || '';
+  const providedToken = typeof req.body?.setup_token === 'string' ? req.body.setup_token : '';
+  const configuredBytes = Buffer.from(configuredToken);
+  const providedBytes = Buffer.from(providedToken);
+  const tokenMatches = configuredBytes.length > 0
+    && configuredBytes.length === providedBytes.length
+    && crypto.timingSafeEqual(configuredBytes, providedBytes);
+  if (!tokenMatches || !adminEmails().has(req.user.email.toLowerCase())) {
+    return res.status(403).json({ detail: 'Admin setup is not available for this account.' });
+  }
+
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('marketflow-first-admin')::bigint)");
+    const admins = await client.query("SELECT COUNT(*) AS count FROM users WHERE role = 'admin' AND is_active = TRUE");
+    if (Number(admins.rows[0].count) > 0) throw apiError(409, 'An active admin already exists.');
+    const result = await client.query(
+      `UPDATE users SET role = 'admin', seller_requested = FALSE
+       WHERE id = $1 AND is_active = TRUE
+       RETURNING id, email, first_name, role, seller_requested`,
+      [req.user.id],
+    );
+    if (!result.rowCount) throw apiError(401, 'This account is unavailable.');
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    next(error);
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.post('/api/seller/apply/', authenticate, async (req, res, next) => {
+  try {
+    if (req.user.role !== 'customer') {
+      throw apiError(409, req.user.role === 'seller' ? 'Your account is already approved as a seller.' : 'Admin accounts cannot apply to sell.');
+    }
+    const result = await query(
+      `UPDATE users SET seller_requested = TRUE
+       WHERE id = $1 AND seller_requested = FALSE
+       RETURNING id, role, seller_requested`,
+      [req.user.id],
+    );
+    if (!result.rowCount) throw apiError(409, 'Your seller application is already pending.');
+    res.status(202).json(result.rows[0]);
   } catch (error) {
     next(error);
   }
@@ -293,11 +418,260 @@ app.post('/api/auth/refresh/', async (req, res, next) => {
     const token = req.body?.refresh;
     const payload = jwt.verify(token, refreshSecret);
     if (payload.type !== 'refresh') throw apiError(401, 'Invalid refresh token.');
-    const result = await query('SELECT id, email, first_name FROM users WHERE id = $1', [payload.sub]);
-    if (!result.rowCount) throw apiError(401, 'Invalid refresh token.');
+    const result = await query('SELECT id, email, first_name, role, is_active FROM users WHERE id = $1', [payload.sub]);
+    if (!result.rowCount || !result.rows[0].is_active) throw apiError(401, 'Invalid refresh token.');
     res.json({ access: issueTokens(result.rows[0]).access });
   } catch (error) {
     next(error.status ? error : apiError(401, 'Invalid or expired refresh token.'));
+  }
+});
+
+app.get('/api/admin/summary/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT
+         (SELECT COUNT(*) FROM users WHERE is_active = TRUE) AS active_users,
+         (SELECT COUNT(*) FROM users WHERE role = 'seller' AND is_active = TRUE) AS active_sellers,
+         (SELECT COUNT(*) FROM users WHERE seller_requested = TRUE AND role = 'customer' AND is_active = TRUE) AS pending_seller_applications,
+         (SELECT COUNT(*) FROM products WHERE is_active = TRUE AND is_suspended = FALSE) AS live_products,
+         (SELECT COUNT(*) FROM products WHERE is_suspended = TRUE) AS suspended_products,
+         (SELECT COUNT(*) FROM orders WHERE payment_status = 'paid') AS paid_orders,
+         (SELECT COUNT(*) FROM orders WHERE payment_status IN ('initiating', 'pending')) AS pending_payments,
+         (SELECT COALESCE(SUM(oi.unit_price * oi.quantity), 0)
+          FROM order_items oi JOIN orders o ON o.id = oi.order_id
+          WHERE o.payment_status = 'paid') AS gross_sales`,
+    );
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/users/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT id, email, first_name, role, is_active, seller_requested, created_at
+       FROM users ORDER BY seller_requested DESC, created_at DESC`,
+    );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/admin/users/:id/', authenticate, requireRole('admin'), async (req, res, next) => {
+  let client;
+  try {
+    const id = parseId(req.params.id);
+    const { role, is_active: isActive, seller_requested: sellerRequested } = req.body || {};
+    if (role !== undefined && !['customer', 'seller', 'admin'].includes(role)) {
+      throw apiError(400, 'Choose a valid account role.', 'role');
+    }
+    if (isActive !== undefined && typeof isActive !== 'boolean') {
+      throw apiError(400, 'Account active status must be true or false.', 'is_active');
+    }
+    if (sellerRequested !== undefined && typeof sellerRequested !== 'boolean') {
+      throw apiError(400, 'Seller request status must be true or false.', 'seller_requested');
+    }
+    if (role === undefined && isActive === undefined && sellerRequested === undefined) {
+      throw apiError(400, 'Provide a role, active status, or seller request update.');
+    }
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const currentResult = await client.query(
+      'SELECT id, email, role, is_active FROM users WHERE id = $1 FOR UPDATE',
+      [id],
+    );
+    if (!currentResult.rowCount) throw apiError(404, 'User not found.');
+    const current = currentResult.rows[0];
+    if (id === req.user.id && (role !== undefined && role !== 'admin' || isActive === false)) {
+      throw apiError(409, 'You cannot remove your own admin access or suspend your account.');
+    }
+    if (role !== undefined && adminEmails().has(current.email.toLowerCase()) && role !== 'admin') {
+      throw apiError(409, 'An allowlisted administrator must remain an admin.');
+    }
+    if (current.role === 'admin' && (role !== undefined && role !== 'admin' || isActive === false)) {
+      const admins = await client.query(
+        'SELECT COUNT(*) AS count FROM users WHERE role = $1 AND is_active = TRUE',
+        ['admin'],
+      );
+      if (Number(admins.rows[0].count) <= 1) throw apiError(409, 'The last active admin cannot be demoted or suspended.');
+    }
+
+    const fields = [];
+    const values = [];
+    if (role !== undefined) {
+      fields.push(`role = $${values.length + 1}`);
+      values.push(role);
+      if (role !== 'customer') {
+        fields.push(`seller_requested = FALSE`);
+      }
+    }
+    if (isActive !== undefined) {
+      fields.push(`is_active = $${values.length + 1}`);
+      values.push(isActive);
+    }
+    if (sellerRequested !== undefined) {
+      fields.push(`seller_requested = $${values.length + 1}`);
+      values.push(sellerRequested);
+    }
+    values.push(id);
+    const result = await client.query(
+      `UPDATE users SET ${fields.join(', ')} WHERE id = $${values.length}
+       RETURNING id, email, first_name, role, is_active, seller_requested, created_at`,
+      values,
+    );
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (error) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    next(error);
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.get('/api/admin/categories/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT c.id, c.name, c.created_at, COUNT(p.id) AS product_count
+       FROM categories c LEFT JOIN products p ON LOWER(p.category) = LOWER(c.name)
+       GROUP BY c.id ORDER BY LOWER(c.name)`,
+    );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post('/api/admin/categories/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const name = req.body?.name;
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 60) {
+      throw apiError(400, 'Category name must be between 1 and 60 characters.', 'name');
+    }
+    const result = await query(
+      'INSERT INTO categories (name) VALUES ($1) RETURNING id, name, created_at',
+      [name.trim()],
+    );
+    res.status(201).json({ ...result.rows[0], product_count: 0 });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ detail: 'That category already exists.' });
+    next(error);
+  }
+});
+
+app.patch('/api/admin/categories/:id/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    const name = req.body?.name;
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 60) {
+      throw apiError(400, 'Category name must be between 1 and 60 characters.', 'name');
+    }
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const oldCategory = await client.query('SELECT name FROM categories WHERE id = $1 FOR UPDATE', [id]);
+      if (!oldCategory.rowCount) throw apiError(404, 'Category not found.');
+      const result = await client.query(
+        'UPDATE categories SET name = $1 WHERE id = $2 RETURNING id, name, created_at',
+        [name.trim(), id],
+      );
+      await client.query(
+        'UPDATE products SET category = $1, updated_at = NOW() WHERE LOWER(category) = LOWER($2)',
+        [name.trim(), oldCategory.rows[0].name],
+      );
+      await client.query('COMMIT');
+      res.json(result.rows[0]);
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ detail: 'That category already exists.' });
+    next(error);
+  }
+});
+
+app.delete('/api/admin/categories/:id/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const category = await client.query('SELECT name FROM categories WHERE id = $1 FOR UPDATE', [id]);
+      if (!category.rowCount) throw apiError(404, 'Category not found.');
+      const products = await client.query('SELECT COUNT(*) AS count FROM products WHERE LOWER(category) = LOWER($1)', [category.rows[0].name]);
+      if (Number(products.rows[0].count) > 0) throw apiError(409, 'Reassign or remove products in this category before deleting it.');
+      await client.query('DELETE FROM categories WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      res.status(204).end();
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/orders/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT o.id, o.order_number, o.payment_status, o.created_at,
+              u.email AS customer_email, COALESCE(SUM(oi.unit_price * oi.quantity), 0) AS total_amount,
+              COUNT(oi.id) AS item_count,
+              CASE
+                WHEN o.payment_status <> 'paid' THEN o.status
+                WHEN BOOL_AND(oi.fulfillment_status = 'delivered') THEN 'delivered'
+                WHEN BOOL_AND(oi.fulfillment_status IN ('shipped', 'delivered')) THEN 'shipped'
+                WHEN BOOL_OR(oi.fulfillment_status IN ('processing', 'shipped', 'delivered')) THEN 'processing'
+                ELSE 'paid'
+              END AS status
+       FROM orders o JOIN users u ON u.id = o.customer_id
+       LEFT JOIN order_items oi ON oi.order_id = o.id
+       GROUP BY o.id, u.email ORDER BY o.created_at DESC LIMIT 500`,
+    );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get('/api/admin/products/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const result = await query(
+      `SELECT p.id, p.name, p.category, p.price, p.is_active, p.is_suspended, p.stock_quantity,
+              s.name AS store_name, u.email AS seller_email
+       FROM products p JOIN stores s ON s.id = p.store_id
+       JOIN users u ON u.id = s.owner_id
+       ORDER BY p.created_at DESC LIMIT 500`,
+    );
+    res.json(result.rows);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch('/api/admin/products/:id/', authenticate, requireRole('admin'), async (req, res, next) => {
+  try {
+    const id = parseId(req.params.id);
+    const { is_suspended: isSuspended } = req.body || {};
+    if (typeof isSuspended !== 'boolean') throw apiError(400, 'Provide a true or false suspension status.', 'is_suspended');
+    const result = await query(
+      `UPDATE products SET is_suspended = $1, updated_at = NOW()
+       WHERE id = $2 RETURNING id, name, is_suspended`,
+      [isSuspended, id],
+    );
+    if (!result.rowCount) throw apiError(404, 'Product not found.');
+    res.json(result.rows[0]);
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -313,7 +687,7 @@ app.get('/api/stores/', authenticate, async (req, res, next) => {
   }
 });
 
-app.post('/api/stores/', authenticate, async (req, res, next) => {
+app.post('/api/stores/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const { name, slug, description = '' } = req.body || {};
     if (typeof name !== 'string' || !name.trim()) throw apiError(400, 'Store name is required.', 'name');
@@ -342,7 +716,7 @@ app.get('/api/stores/:id/', authenticate, async (req, res, next) => {
   }
 });
 
-app.patch('/api/stores/:id/', authenticate, async (req, res, next) => {
+app.patch('/api/stores/:id/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     const allowed = ['name', 'slug', 'description', 'is_active'];
@@ -368,7 +742,7 @@ app.patch('/api/stores/:id/', authenticate, async (req, res, next) => {
   }
 });
 
-app.get('/api/seller/products/', authenticate, async (req, res, next) => {
+app.get('/api/seller/products/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const result = await query(
       `SELECT p.* FROM products p JOIN stores s ON s.id = p.store_id
@@ -381,7 +755,7 @@ app.get('/api/seller/products/', authenticate, async (req, res, next) => {
   }
 });
 
-app.get('/api/seller/dashboard/', authenticate, async (req, res, next) => {
+app.get('/api/seller/dashboard/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const result = await query(
       `SELECT
@@ -403,7 +777,7 @@ app.get('/api/seller/dashboard/', authenticate, async (req, res, next) => {
   }
 });
 
-app.get('/api/seller/orders/', authenticate, async (req, res, next) => {
+app.get('/api/seller/orders/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     await ensureSchema();
   } catch (error) {
@@ -435,7 +809,7 @@ app.get('/api/seller/orders/', authenticate, async (req, res, next) => {
   }
 });
 
-app.patch('/api/seller/order-items/:id/', authenticate, async (req, res, next) => {
+app.patch('/api/seller/order-items/:id/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   const transitions = { pending: 'processing', processing: 'shipped', shipped: 'delivered' };
   try {
     const itemId = parseId(req.params.id);
@@ -483,7 +857,7 @@ app.patch('/api/seller/order-items/:id/', authenticate, async (req, res, next) =
   }
 });
 
-app.post('/api/seller/products/', authenticate, async (req, res, next) => {
+app.post('/api/seller/products/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const storeId = parseId(req.body?.store_id);
     const store = await query('SELECT id FROM stores WHERE id = $1 AND owner_id = $2', [storeId, req.user.id]);
@@ -500,7 +874,7 @@ app.post('/api/seller/products/', authenticate, async (req, res, next) => {
   }
 });
 
-app.get('/api/seller/products/:id/', authenticate, async (req, res, next) => {
+app.get('/api/seller/products/:id/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const result = await query(
       `SELECT p.* FROM products p JOIN stores s ON s.id = p.store_id
@@ -514,7 +888,7 @@ app.get('/api/seller/products/:id/', authenticate, async (req, res, next) => {
   }
 });
 
-app.patch('/api/seller/products/:id/', authenticate, async (req, res, next) => {
+app.patch('/api/seller/products/:id/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const id = parseId(req.params.id);
     const input = validateProductInput(req.body || {}, true);
@@ -537,7 +911,7 @@ app.patch('/api/seller/products/:id/', authenticate, async (req, res, next) => {
   }
 });
 
-app.delete('/api/seller/products/:id/', authenticate, async (req, res, next) => {
+app.delete('/api/seller/products/:id/', authenticate, requireRole('seller', 'admin'), async (req, res, next) => {
   try {
     const result = await query(
       `DELETE FROM products p USING stores s
@@ -674,7 +1048,8 @@ app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, re
     const ids = requestedItems.map((item) => item.product_id).sort((a, b) => a - b);
     const result = await client.query(
       `SELECT p.* FROM products p JOIN stores s ON s.id = p.store_id
-       WHERE p.id = ANY($1::bigint[]) AND p.is_active = TRUE AND s.is_active = TRUE
+       JOIN users u ON u.id = s.owner_id AND u.is_active = TRUE
+       WHERE p.id = ANY($1::bigint[]) AND p.is_active = TRUE AND p.is_suspended = FALSE AND s.is_active = TRUE
        ORDER BY p.id FOR UPDATE OF p`,
       [ids],
     );

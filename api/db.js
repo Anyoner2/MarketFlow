@@ -20,8 +20,21 @@ const schema = `
     email TEXT NOT NULL,
     first_name VARCHAR(150) NOT NULL DEFAULT '',
     password_hash TEXT NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'customer' CHECK (role IN ('customer', 'seller', 'admin')),
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    seller_requested BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS role VARCHAR(16) NOT NULL DEFAULT 'customer';
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+  ALTER TABLE users ADD COLUMN IF NOT EXISTS seller_requested BOOLEAN NOT NULL DEFAULT FALSE;
+  DO $$
+  BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'users_role_check') THEN
+      ALTER TABLE users ADD CONSTRAINT users_role_check CHECK (role IN ('customer', 'seller', 'admin'));
+    END IF;
+  END;
+  $$;
   CREATE UNIQUE INDEX IF NOT EXISTS users_email_lower_unique ON users (LOWER(email));
 
   CREATE TABLE IF NOT EXISTS stores (
@@ -34,6 +47,8 @@ const schema = `
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  UPDATE users SET role = 'seller'
+    WHERE role = 'customer' AND EXISTS (SELECT 1 FROM stores WHERE stores.owner_id = users.id);
 
   CREATE TABLE IF NOT EXISTS products (
     id BIGSERIAL PRIMARY KEY,
@@ -45,9 +60,11 @@ const schema = `
     stock_quantity INTEGER NOT NULL DEFAULT 0 CHECK (stock_quantity >= 0),
     image_url TEXT NOT NULL DEFAULT '',
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    is_suspended BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
   );
+  ALTER TABLE products ADD COLUMN IF NOT EXISTS is_suspended BOOLEAN NOT NULL DEFAULT FALSE;
   CREATE INDEX IF NOT EXISTS products_store_active_idx ON products (store_id, is_active);
 
   CREATE TABLE IF NOT EXISTS orders (
@@ -98,6 +115,19 @@ const schema = `
   );
   CREATE INDEX IF NOT EXISTS product_reviews_product_created_idx
     ON product_reviews (product_id, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS categories (
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR(60) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS categories_name_lower_unique ON categories (LOWER(name));
+  INSERT INTO categories (name)
+    SELECT DISTINCT ON (LOWER(category)) category
+    FROM products
+    WHERE BTRIM(category) <> ''
+    ORDER BY LOWER(category), category
+    ON CONFLICT DO NOTHING;
 `;
 
 let schemaReady;

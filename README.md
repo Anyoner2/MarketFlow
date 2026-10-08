@@ -30,6 +30,9 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `POST /api/auth/register/` creates an account and returns access and refresh tokens.
 - `POST /api/auth/login/` accepts email and password and returns access and refresh tokens.
 - `POST /api/auth/refresh/` exchanges a refresh token for a new access token.
+- `GET /api/auth/me/` returns the signed-in user's current role and seller application status.
+- `POST /api/seller/apply/` requests admin approval for seller access.
+- `POST /api/admin/bootstrap/` securely provisions the first allowlisted administrator using a one-time setup token.
 - `GET /api/products/` lists active products from active stores without authentication.
 - `GET /api/products/<id>/reviews/` lists reviews for an active product.
 - `POST /api/products/<id>/reviews/` creates one review for a product the signed-in customer has paid for.
@@ -40,6 +43,8 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `GET /api/seller/orders/` lists paid order items from stores owned by the current user.
 - `PATCH /api/seller/order-items/<id>/` advances an owned paid item through processing, shipped, and delivered.
 - `GET /api/seller/dashboard/` returns listing, paid-order, sales, and fulfillment counts for the current user.
+- `/api/admin/summary/`, `/api/admin/users/`, `/api/admin/categories/`, `/api/admin/orders/`, and `/api/admin/products/` provide admin analytics and platform management.
+- Admin user and product `PATCH` routes approve sellers, suspend accounts, and suspend or reinstate products.
 - `GET /api/orders/` lists the current user's orders.
 - `POST /api/orders/checkout/` validates inventory and starts an M-Pesa STK Push for the current user's order.
 - `POST /api/payments/mpesa/callback/` receives Daraja payment confirmations.
@@ -47,6 +52,7 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 
 Customers can view order/payment progress in **My orders**. Product reviews are limited to one per customer and product, and can only be submitted after a successful purchase.
 Sellers can review paid orders and sales totals in Seller Studio. Fulfillment updates are scoped to the seller's own order items and must follow the processing → shipped → delivered sequence; customer order tracking reflects item fulfillment progress.
+Public registration always creates a customer account. Set `ADMIN_EMAILS` and a long random `ADMIN_BOOTSTRAP_TOKEN` in the API environment; sign up or sign in with the allowlisted account, choose **Set up admin**, and enter the one-time token. The server only accepts this bootstrap while no active administrator exists. Remove the token from Vercel after initial setup. Admin permissions are rechecked from the database on every authenticated request.
 
 Authenticated requests send `Authorization: Bearer <access-token>`. Access tokens last 15 minutes; refresh tokens last 30 days.
 
@@ -80,6 +86,8 @@ DATABASE_URL=<managed PostgreSQL connection string>
 JWT_SECRET=<long random secret>
 JWT_REFRESH_SECRET=<different long random secret>
 CORS_ORIGIN=https://<your-frontend-vercel-domain>
+ADMIN_EMAILS=<initial-admin-email>
+ADMIN_BOOTSTRAP_TOKEN=<long-random-one-time-token>
 MPESA_ENV=sandbox
 MPESA_CONSUMER_KEY=<Daraja sandbox consumer key>
 MPESA_CONSUMER_SECRET=<Daraja sandbox consumer secret>

@@ -8,6 +8,11 @@ type Store = {
   is_active: boolean
 }
 
+type Category = {
+  id: number
+  name: string
+}
+
 type SellerProduct = {
   id: number
   store_id: number
@@ -18,6 +23,7 @@ type SellerProduct = {
   image_url: string
   stock_quantity: number
   is_active: boolean
+  is_suspended: boolean
 }
 
 type SellerOrder = {
@@ -90,6 +96,7 @@ function slugify(value: string) {
 
 function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }: SellerStudioProps) {
   const [stores, setStores] = useState<Store[]>([])
+  const [categories, setCategories] = useState<Category[]>([])
   const [products, setProducts] = useState<SellerProduct[]>([])
   const [sellerOrders, setSellerOrders] = useState<SellerOrder[]>([])
   const [dashboard, setDashboard] = useState<SellerDashboard | null>(null)
@@ -114,14 +121,16 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
       apiRequest(apiBaseUrl, token, '/api/seller/products/'),
       apiRequest(apiBaseUrl, token, '/api/seller/orders/'),
       apiRequest(apiBaseUrl, token, '/api/seller/dashboard/'),
+      apiRequest(apiBaseUrl, token, '/api/categories/'),
     ])
-      .then(([storeData, productData, orderData, dashboardData]) => {
+      .then(([storeData, productData, orderData, dashboardData, categoryData]) => {
         if (!active) return
         const loadedStores = storeData as Store[]
         setStores(loadedStores)
         setProducts(productData as SellerProduct[])
         setSellerOrders(orderData as SellerOrder[])
         setDashboard(dashboardData as SellerDashboard)
+        setCategories(categoryData as Category[])
         setSelectedStoreId((current) => current || (loadedStores[0] ? String(loadedStores[0].id) : ''))
       })
       .catch((error: unknown) => {
@@ -310,7 +319,11 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
               <h3>Add a listing</h3>
               <form className="seller-form" onSubmit={createProduct}>
                 <label>Product name<input value={productName} onChange={(event) => setProductName(event.target.value)} maxLength={160} required /></label>
-                <label>Category<input value={productCategory} onChange={(event) => setProductCategory(event.target.value)} maxLength={60} required /></label>
+                <label>Category<select value={productCategory} onChange={(event) => setProductCategory(event.target.value)} required>
+                  {productCategory !== 'Other' && !categories.some((category) => category.name === productCategory) && <option value={productCategory}>{productCategory}</option>}
+                  {categories.map((category) => <option value={category.name} key={category.id}>{category.name}</option>)}
+                  {!categories.some((category) => category.name === 'Other') && <option value="Other">Other</option>}
+                </select></label>
                 <label>Price (KES)<input type="number" min="0" step="0.01" value={productPrice} onChange={(event) => setProductPrice(event.target.value)} required /></label>
                 <label>Stock<input type="number" min="0" step="1" value={productStock} onChange={(event) => setProductStock(event.target.value)} required /></label>
                 <label className="seller-wide">Description<textarea value={productDescription} onChange={(event) => setProductDescription(event.target.value)} rows={2} /></label>
@@ -324,12 +337,12 @@ function SellerStudio({ apiBaseUrl, token, onClose, onCatalogChanged, onNotice }
               {visibleProducts.length === 0 ? <p className="seller-empty">Your store has no listings yet.</p> : visibleProducts.map((product) => (
                 <article className="seller-product" key={product.id}>
                   <div className="seller-product-copy">
-                    <p className="product-category">{product.category} · {product.is_active ? 'Live' : 'Paused'}</p>
+                    <p className="product-category">{product.category} · {product.is_suspended ? 'Suspended by admin' : product.is_active ? 'Live' : 'Paused'}</p>
                     <h4>{product.name}</h4>
                     <p>KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 2 })} <span>·</span> {product.stock_quantity} in stock</p>
                   </div>
                   <div className="seller-product-actions">
-                    <button type="button" disabled={busy} onClick={() => void toggleProduct(product)}>{product.is_active ? 'Pause' : 'Publish'}</button>
+                    <button type="button" disabled={busy || product.is_suspended} onClick={() => void toggleProduct(product)}>{product.is_suspended ? 'Admin review' : product.is_active ? 'Pause' : 'Publish'}</button>
                     <button type="button" className="seller-delete" disabled={busy} onClick={() => void deleteProduct(product)}>Remove</button>
                   </div>
                 </article>
