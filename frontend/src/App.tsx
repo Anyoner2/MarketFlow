@@ -159,6 +159,10 @@ function App() {
 
   async function checkout(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (Object.keys(cart).some((productId) => products.find((product) => product.id === Number(productId))?.previewOnly)) {
+      setNotice('Preview items can’t be purchased yet. Add a live seller listing to enable checkout.')
+      return
+    }
     if (!token) {
       setAuthOpen(true)
       return
@@ -257,7 +261,10 @@ function App() {
               <div className="product-image-wrap">
                 <img src={product.image.startsWith('http') ? product.image : `https://images.unsplash.com/${product.image}?auto=format&fit=crop&w=900&q=85`} alt={product.name}/>
                 {product.badge && <span className="product-badge">{product.badge}</span>}
-                <button className="add-button" aria-label={product.previewOnly ? `${product.name} preview only` : `Add ${product.name} to bag`} disabled={product.previewOnly} onClick={() => setCart((current) => ({ ...current, [product.id]: (current[product.id] || 0) + 1 }))}>+</button>
+                <button className="add-button" aria-label={`Add ${product.name} to bag`} onClick={() => {
+                  setCart((current) => ({ ...current, [product.id]: (current[product.id] || 0) + 1 }))
+                  setNotice(`${product.name} added to your bag.`)
+                }}><span aria-hidden="true">+</span> Add to bag</button>
               </div>
               <div className="product-meta"><div><p className="product-category">{product.category}</p><h3>{product.name}</h3></div><span className="price">KSh {Number(product.price).toLocaleString('en-KE', { maximumFractionDigits: 0 })}</span></div>
               <p className="product-description">{product.description}</p>
@@ -296,7 +303,9 @@ function App() {
                 })}
               </div>
               <p className="cart-total"><span>Total</span><strong>KSh {Object.entries(cart).reduce((total, [productId, quantity]) => total + Number(products.find((product) => product.id === Number(productId))?.price || 0) * quantity, 0).toLocaleString('en-KE')}</strong></p>
-              {!token ? <button className="dark-button" type="button" onClick={() => setAuthOpen(true)}>Sign in to checkout <span aria-hidden="true">↗</span></button> : <form onSubmit={checkout}>
+              {Object.keys(cart).some((productId) => products.find((product) => product.id === Number(productId))?.previewOnly)
+                ? <p className="catalog-notice">Preview items can’t be purchased yet. Live seller listings will be available to checkout.</p>
+                : !token ? <button className="dark-button" type="button" onClick={() => setAuthOpen(true)}>Sign in to checkout <span aria-hidden="true">↗</span></button> : <form onSubmit={checkout}>
                 <label>M-Pesa phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} placeholder="+254 7XX XXX XXX" autoComplete="tel" required /></label>
                 <button className="dark-button" type="submit" disabled={checkingOut || paymentStatus === 'pending'}>{checkingOut ? 'Starting payment…' : 'Pay with M-Pesa'} <span aria-hidden="true">↗</span></button>
                 {paymentOrderId && paymentStatus === 'pending' && <p role="status">M-Pesa prompt sent. Check your phone and enter your PIN.</p>}
