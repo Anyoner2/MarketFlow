@@ -115,6 +115,12 @@ function App() {
   async function submitAuth(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const formData = new FormData(event.currentTarget)
+    const passwordConfirmation = formData.get('confirm_password')
+    if (registering && formData.get('password') !== passwordConfirmation) {
+      setNotice('Passwords do not match.')
+      return
+    }
+    formData.delete('confirm_password')
     const payload = Object.fromEntries(formData.entries())
     const endpoint = `${apiBaseUrl}${registering ? '/api/auth/register/' : '/api/auth/login/'}`
     setNotice('')
@@ -306,6 +312,7 @@ function App() {
               {registering && <label>Name<input name="first_name" autoComplete="given-name" required/></label>}
               <label>Email<input name="email" type="email" autoComplete="email" required/></label>
               <label>Password<input name="password" type="password" autoComplete={registering ? 'new-password' : 'current-password'} minLength={8} required/></label>
+              {registering && <label>Confirm password<input name="confirm_password" type="password" autoComplete="new-password" minLength={8} required/></label>}
               <button className="dark-button" type="submit">{registering ? 'Create account' : 'Sign in'} <span aria-hidden="true">↗</span></button>
             </form>
             <button className="switch-auth" onClick={() => setRegistering((value) => !value)}>{registering ? 'Already have an account? Sign in' : 'New around here? Create an account'}</button>
