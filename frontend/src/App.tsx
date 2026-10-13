@@ -29,6 +29,7 @@ type CustomerOrder = {
   order_number: string
   status: string
   payment_status: string
+  payment_method: 'mpesa' | 'stripe'
   payment_result_description?: string
   created_at: string
   total_amount: string
@@ -76,16 +77,26 @@ async function loadCatalog(): Promise<Product[]> {
   return data.length ? data.map((product, index) => ({ ...product, image: product.image || previewProducts[index % previewProducts.length].image, previewOnly: false })) : previewCatalog
 }
 
+function paymentReturnFromLocation(): { orderId: number; result: 'success' | 'cancelled' } | null {
+  const params = new URLSearchParams(window.location.search)
+  const result = params.get('payment')
+  const orderId = Number(params.get('order_id'))
+  if ((result !== 'success' && result !== 'cancelled') || !Number.isSafeInteger(orderId) || orderId < 1) return null
+  return { orderId, result }
+}
+
 function App() {
+  const [paymentReturn] = useState(paymentReturnFromLocation)
   const [products, setProducts] = useState<Product[]>(previewCatalog)
   const [activeCategory, setActiveCategory] = useState('All finds')
   const [search, setSearch] = useState('')
   const [cart, setCart] = useState<Record<number, number>>({})
   const [cartOpen, setCartOpen] = useState(false)
   const [phoneNumber, setPhoneNumber] = useState('')
+  const [paymentMethod, setPaymentMethod] = useState<'mpesa' | 'stripe'>('mpesa')
   const [checkingOut, setCheckingOut] = useState(false)
-  const [paymentOrderId, setPaymentOrderId] = useState<number | null>(null)
-  const [paymentStatus, setPaymentStatus] = useState('')
+  const [paymentOrderId, setPaymentOrderId] = useState<number | null>(paymentReturn?.orderId ?? null)
+  const [paymentStatus, setPaymentStatus] = useState(paymentReturn ? 'pending' : '')
   const [ordersOpen, setOrdersOpen] = useState(false)
   const [orders, setOrders] = useState<CustomerOrder[]>([])
   const [ordersLoading, setOrdersLoading] = useState(false)
@@ -98,7 +109,11 @@ function App() {
   const [reviewSubmitting, setReviewSubmitting] = useState(false)
   const [authOpen, setAuthOpen] = useState(false)
   const [registering, setRegistering] = useState(false)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState(paymentReturn
+    ? paymentReturn.result === 'success'
+      ? 'Card payment submitted. Confirming your order…'
+      : 'Card checkout was canceled. Your order will remain pending until the checkout session expires.'
+    : '')
   const [token, setToken] = useState(() => localStorage.getItem('marketflow_access'))
   const [userRole, setUserRole] = useState<'customer' | 'seller' | 'admin' | null>(null)
   const [sellerRequested, setSellerRequested] = useState(false)
@@ -234,6 +249,12 @@ function App() {
       .catch(() => { if (active) setProducts(previewCatalog) })
     return () => { active = false }
   }, [])
+
+  useEffect(() => {
+    if (paymentReturn) {
+      window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.hash}`)
+    }
+  }, [paymentReturn])
 
   useEffect(() => {
     if (paymentOrderId === null || !token) return
@@ -374,7 +395,8 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          phone_number: phoneNumber,
+          payment_method: paymentMethod,
+          ...(paymentMethod === 'mpesa' ? { phone_number: phoneNumber } : {}),
           items: Object.entries(cart).map(([productId, quantity]) => ({
             product_id: Number(productId),
             quantity,
@@ -386,14 +408,21 @@ function App() {
         const messages = Object.values(data)
           .flatMap((value) => Array.isArray(value) ? value : [value])
           .filter((value): value is string => typeof value === 'string')
-        throw new Error(messages.join(' ') || 'Could not start M-Pesa checkout.')
+        throw new Error(messages.join(' ') || 'Could not start checkout.')
+      }
+      if (paymentMethod === 'stripe' && typeof data.checkout_url !== 'string') {
+        throw new Error('Stripe did not return a checkout link.')
       }
       setPaymentOrderId(data.id)
       setPaymentStatus(data.payment_status)
       setCart({})
+      if (paymentMethod === 'stripe') {
+        window.location.assign(data.checkout_url)
+        return
+      }
       setNotice(data.payment_message || 'Check your phone to complete the M-Pesa payment.')
     } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'Could not start M-Pesa checkout.')
+      setNotice(error instanceof Error ? error.message : 'Could not start checkout.')
     } finally {
       setCheckingOut(false)
     }
@@ -513,9 +542,13 @@ function App() {
               {Object.keys(cart).some((productId) => products.find((product) => product.id === Number(productId))?.previewOnly)
                 ? <p className="catalog-notice">Preview items can’t be purchased yet. Live seller listings will be available to checkout.</p>
                 : !token ? <button className="dark-button" type="button" onClick={() => setAuthOpen(true)}>Sign in to checkout <span aria-hidden="true">↗</span></button> : <form onSubmit={checkout}>
-                <label>M-Pesa phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} placeholder="+254 7XX XXX XXX" autoComplete="tel" required /></label>
-                <button className="dark-button" type="submit" disabled={checkingOut || paymentStatus === 'pending'}>{checkingOut ? 'Starting payment…' : 'Pay with M-Pesa'} <span aria-hidden="true">↗</span></button>
-                {paymentOrderId && paymentStatus === 'pending' && <p role="status">M-Pesa prompt sent. Check your phone and enter your PIN.</p>}
+                <fieldset className="payment-method-options">
+                  <legend>Payment method</legend>
+                  <label><input type="radio" name="payment_method" value="mpesa" checked={paymentMethod === 'mpesa'} onChange={() => setPaymentMethod('mpesa')} /> M-Pesa</label>
+                  <label><input type="radio" name="payment_method" value="stripe" checked={paymentMethod === 'stripe'} onChange={() => setPaymentMethod('stripe')} /> Card</label>
+                </fieldset>
+                {paymentMethod === 'mpesa' && <label>M-Pesa phone number<input type="tel" value={phoneNumber} onChange={(event) => setPhoneNumber(event.target.value)} placeholder="+254 7XX XXX XXX" autoComplete="tel" required /></label>}
+                <button className="dark-button" type="submit" disabled={checkingOut}>{checkingOut ? 'Starting payment…' : paymentMethod === 'mpesa' ? 'Pay with M-Pesa' : 'Pay by card'} <span aria-hidden="true">↗</span></button>
               </form>}
             </>}
           </section>
@@ -538,7 +571,7 @@ function App() {
                   <p className="order-date">{new Date(order.created_at).toLocaleDateString()}</p>
                   {currentStage >= 0 ? <div className="order-tracking" aria-label={`Order tracking: ${statusLabel}`}>
                     {['Confirmed', 'Preparing', 'On the way', 'Delivered'].map((stage, index) => <span className={index <= currentStage ? 'complete' : ''} key={stage}>{stage}</span>)}
-                  </div> : <p className="order-tracking-message">{order.payment_status === 'pending' ? 'Complete the M-Pesa prompt to confirm this order.' : order.payment_status === 'failed' ? order.payment_result_description || 'Payment was not completed.' : `Order status: ${statusLabel}.`}</p>}
+                  </div> : <p className="order-tracking-message">{order.payment_status === 'pending' ? order.payment_method === 'stripe' ? 'Complete the card checkout to confirm this order.' : 'Complete the M-Pesa prompt to confirm this order.' : order.payment_status === 'failed' ? order.payment_result_description || 'Payment was not completed.' : `Order status: ${statusLabel}.`}</p>}
                   <div className="customer-order-items">{order.items.map((item) => <div key={item.id}>
                     <span>{item.product_name} × {item.quantity} <em>{item.fulfillment_status}</em></span>
                     {item.can_review && <button type="button" onClick={() => {

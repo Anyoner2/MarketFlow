@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { ensureSchema, pool, query } = require('./db');
 const { configuration: mpesaConfiguration, initiateStkPush, normalizePhone } = require('./mpesa');
+const { configuration: stripeConfiguration, constructWebhookEvent, createCheckoutSession } = require('./stripe');
 
 const app = express();
 const jwtSecret = process.env.JWT_SECRET;
@@ -20,6 +21,7 @@ app.use(cors({
   origin: process.env.CORS_ORIGIN ? process.env.CORS_ORIGIN.split(',').map((origin) => origin.trim()) : true,
   credentials: true,
 }));
+app.post('/api/payments/stripe/webhook/', express.raw({ type: 'application/json', limit: '1mb' }), handleStripeWebhook);
 app.use(express.json({ limit: '1mb' }));
 
 function apiError(status, message, field) {
@@ -134,7 +136,7 @@ function productResponse(row) {
 
 async function getOrder(client, orderId, customerId) {
   const orderResult = await client.query(
-    `SELECT id, order_number, status, payment_status, payment_receipt_number,
+    `SELECT id, order_number, status, payment_status, payment_method, payment_receipt_number,
             payment_phone_number, payment_result_description, currency, created_at
      FROM orders WHERE id = $1 AND customer_id = $2`,
     [orderId, customerId],
@@ -163,6 +165,128 @@ async function getOrder(client, orderId, customerId) {
     status = allDelivered ? 'delivered' : allShipped ? 'shipped' : anyProcessing ? 'processing' : 'paid';
   }
   return { ...order, status, items, total_amount: total.toFixed(2) };
+}
+
+async function releasePendingOrder(orderId, description) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      'SELECT payment_status FROM orders WHERE id = $1 FOR UPDATE',
+      [orderId],
+    );
+    if (result.rows[0]?.payment_status === 'initiating') {
+      await client.query(
+        `UPDATE products p SET stock_quantity = p.stock_quantity + oi.quantity, updated_at = NOW()
+         FROM order_items oi WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+        [orderId],
+      );
+      await client.query(
+        `UPDATE orders SET status = 'payment_failed', payment_status = 'failed',
+          payment_result_description = $1, updated_at = NOW() WHERE id = $2`,
+        [description, orderId],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function handleStripeWebhook(req, res, next) {
+  let event;
+  try {
+    event = constructWebhookEvent(req.body, req.get('stripe-signature'));
+  } catch (error) {
+    if (error.status) return next(error);
+    if (error.type === 'StripeSignatureVerificationError') {
+      return res.status(400).json({ detail: 'Invalid Stripe webhook signature.' });
+    }
+    return next(error);
+  }
+
+  if (!['checkout.session.completed', 'checkout.session.expired', 'checkout.session.async_payment_failed'].includes(event.type)) {
+    return res.json({ received: true });
+  }
+
+  const session = event.data.object;
+  const orderId = Number(session.metadata?.order_id);
+  if (!Number.isSafeInteger(orderId) || orderId < 1 || typeof session.id !== 'string') {
+    return res.status(400).json({ detail: 'Invalid Stripe checkout session metadata.' });
+  }
+
+  try {
+    await ensureSchema();
+  } catch (error) {
+    return next(error);
+  }
+  const client = await pool.connect().catch(next);
+  if (!client) return;
+  try {
+    await client.query('BEGIN');
+    const result = await client.query(
+      `SELECT id, payment_status FROM orders
+       WHERE id = $1 AND payment_method = 'stripe' AND stripe_checkout_session_id = $2
+       FOR UPDATE`,
+      [orderId, session.id],
+    );
+    if (!result.rowCount) {
+      console.error(`Received Stripe event ${event.id} for unknown checkout session ${session.id}.`);
+      throw apiError(404, 'Payment request not found.');
+    }
+
+    const order = result.rows[0];
+    if (order.payment_status !== 'pending') {
+      await client.query('COMMIT');
+      return res.json({ received: true });
+    }
+
+    if (event.type === 'checkout.session.completed') {
+      if (session.payment_status !== 'paid') {
+        await client.query('COMMIT');
+        return res.json({ received: true });
+      }
+      const totalResult = await client.query(
+        'SELECT COALESCE(SUM(unit_price * quantity), 0) AS total FROM order_items WHERE order_id = $1',
+        [order.id],
+      );
+      const expectedAmount = Math.round(Number(totalResult.rows[0].total) * 100);
+      if (session.currency !== 'kes' || session.amount_total !== expectedAmount) {
+        throw apiError(400, 'Stripe payment details do not match this order.');
+      }
+      await client.query(
+        `UPDATE orders SET status = 'paid', payment_status = 'paid',
+          payment_receipt_number = $1, payment_result_description = $2, updated_at = NOW()
+         WHERE id = $3`,
+        [String(session.payment_intent || session.id), 'Card payment received.', order.id],
+      );
+    } else {
+      await client.query(
+        `UPDATE products p SET stock_quantity = p.stock_quantity + oi.quantity, updated_at = NOW()
+         FROM order_items oi WHERE oi.order_id = $1 AND p.id = oi.product_id`,
+        [order.id],
+      );
+      await client.query(
+        `UPDATE orders SET status = 'payment_failed', payment_status = 'failed',
+          payment_result_description = $1, updated_at = NOW()
+         WHERE id = $2`,
+        [event.type === 'checkout.session.expired'
+          ? 'Card checkout expired before payment.'
+          : 'Card payment was not completed.', order.id],
+      );
+    }
+
+    await client.query('COMMIT');
+    return res.json({ received: true });
+  } catch (error) {
+    await client.query('ROLLBACK').catch(() => {});
+    return next(error);
+  } finally {
+    client.release();
+  }
 }
 
 async function getSellerOrder(client, orderId, sellerId) {
@@ -1018,10 +1142,18 @@ app.post('/api/payments/mpesa/callback/', async (req, res, next) => {
 app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, res, next) => {
   const requestedItems = req.body?.items;
   if (!Array.isArray(requestedItems) || !requestedItems.length) return res.status(400).json({ items: ['At least one item is required.'] });
-  let phoneNumber;
+  const paymentMethod = req.body?.payment_method ?? 'mpesa';
+  if (!['mpesa', 'stripe'].includes(paymentMethod)) {
+    return res.status(400).json({ detail: 'Choose a supported payment method.' });
+  }
+  let phoneNumber = null;
   try {
-    phoneNumber = normalizePhone(req.body?.phone_number);
-    mpesaConfiguration();
+    if (paymentMethod === 'mpesa') {
+      phoneNumber = normalizePhone(req.body?.phone_number);
+      mpesaConfiguration();
+    } else {
+      stripeConfiguration();
+    }
   } catch (error) {
     return res.status(error.status || 400).json({ detail: error.message });
   }
@@ -1036,6 +1168,7 @@ app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, re
 
   let orderId;
   let amount;
+  let checkoutItems;
   try {
     await ensureSchema();
   } catch (error) {
@@ -1065,12 +1198,20 @@ app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, re
       (sum, item) => sum + Number(productMap.get(item.product_id).price) * item.quantity,
       0,
     );
-    if (!Number.isSafeInteger(amount) || amount < 1) throw apiError(400, 'M-Pesa checkout requires a whole-number KES total.', 'items');
+    if (!Number.isSafeInteger(amount) || amount < 1) throw apiError(400, 'Checkout requires a whole-number KES total.', 'items');
+    checkoutItems = requestedItems.map((item) => {
+      const product = productMap.get(item.product_id);
+      return {
+        product_name: product.name,
+        unit_price: String(product.price),
+        quantity: item.quantity,
+      };
+    });
 
     const orderResult = await client.query(
-      `INSERT INTO orders (order_number, customer_id, payment_status, payment_phone_number)
-       VALUES ($1, $2, 'initiating', $3) RETURNING id`,
-      [crypto.randomUUID(), req.user.id, phoneNumber],
+      `INSERT INTO orders (order_number, customer_id, payment_status, payment_method, payment_phone_number)
+       VALUES ($1, $2, 'initiating', $3, $4) RETURNING id`,
+      [crypto.randomUUID(), req.user.id, paymentMethod, phoneNumber],
     );
     orderId = orderResult.rows[0].id;
     for (const item of requestedItems) {
@@ -1091,6 +1232,47 @@ app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, re
     client.release();
   }
 
+  if (paymentMethod === 'stripe') {
+    let session;
+    try {
+      session = await createCheckoutSession({ orderId, items: checkoutItems });
+      if (typeof session.id !== 'string' || typeof session.url !== 'string') {
+        throw new Error('Stripe did not return a valid checkout session.');
+      }
+    } catch (error) {
+      try {
+        await releasePendingOrder(orderId, error.message);
+      } catch (cleanupError) {
+        console.error(`Could not restore stock after a failed Stripe request for order ${orderId}.`, cleanupError);
+      }
+      error.status = error.status || 502;
+      return next(error);
+    }
+
+    try {
+      const client = await pool.connect();
+      try {
+        await client.query(
+          `UPDATE orders SET payment_status = 'pending',
+            stripe_checkout_session_id = $1, updated_at = NOW()
+           WHERE id = $2 AND payment_status = 'initiating'`,
+          [session.id, orderId],
+        );
+        const order = await getOrder(client, orderId, req.user.id);
+        return res.status(202).json({
+          ...order,
+          checkout_url: session.url,
+          payment_message: 'Continue to Stripe to complete your card payment.',
+        });
+      } finally {
+        client.release();
+      }
+    } catch (error) {
+      console.error(`Stripe accepted order ${orderId}, but its checkout reference could not be saved.`, error);
+      return next(error);
+    }
+  }
+
   let payment;
   try {
     payment = await initiateStkPush({
@@ -1102,34 +1284,9 @@ app.post(['/api/orders/', '/api/orders/checkout/'], authenticate, async (req, re
   } catch (error) {
     try {
       await ensureSchema();
-      const cleanupClient = await pool.connect();
-      try {
-        await cleanupClient.query('BEGIN');
-        const currentOrder = await cleanupClient.query(
-          'SELECT payment_status FROM orders WHERE id = $1 FOR UPDATE',
-          [orderId],
-        );
-        if (currentOrder.rows[0]?.payment_status === 'initiating') {
-          await cleanupClient.query(
-            `UPDATE products p SET stock_quantity = p.stock_quantity + oi.quantity, updated_at = NOW()
-             FROM order_items oi WHERE oi.order_id = $1 AND p.id = oi.product_id`,
-            [orderId],
-          );
-          await cleanupClient.query(
-            `UPDATE orders SET status = 'payment_failed', payment_status = 'failed',
-              payment_result_description = $1, updated_at = NOW() WHERE id = $2`,
-            [error.message, orderId],
-          );
-        }
-        await cleanupClient.query('COMMIT');
-      } catch (cleanupError) {
-        await cleanupClient.query('ROLLBACK').catch(() => {});
-        console.error('Could not release inventory after a failed M-Pesa request.', cleanupError);
-      } finally {
-        cleanupClient.release();
-      }
+      await releasePendingOrder(orderId, error.message);
     } catch (cleanupError) {
-      console.error('Could not connect to release inventory after a failed M-Pesa request.', cleanupError);
+      console.error(`Could not restore stock after a failed M-Pesa request for order ${orderId}.`, cleanupError);
     }
     error.status = error.status || 502;
     return next(error);

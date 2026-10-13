@@ -46,8 +46,9 @@ The storefront runs at `http://localhost:5173/` and proxies `/api` requests to t
 - `/api/admin/summary/`, `/api/admin/users/`, `/api/admin/categories/`, `/api/admin/orders/`, and `/api/admin/products/` provide admin analytics and platform management.
 - Admin user and product `PATCH` routes approve sellers, suspend accounts, and suspend or reinstate products.
 - `GET /api/orders/` lists the current user's orders.
-- `POST /api/orders/checkout/` validates inventory and starts an M-Pesa STK Push for the current user's order.
+- `POST /api/orders/checkout/` validates inventory and starts either an M-Pesa STK Push or Stripe card checkout for the current user's order.
 - `POST /api/payments/mpesa/callback/` receives Daraja payment confirmations.
+- `POST /api/payments/stripe/webhook/` receives signed Stripe Checkout events.
 - `GET /api/orders/<id>/` retrieves one of the current user's orders.
 
 Customers can view order/payment progress in **My orders**. Product reviews are limited to one per customer and product, and can only be submitted after a successful purchase.
@@ -56,10 +57,11 @@ Public registration always creates a customer account. Set `ADMIN_EMAILS` and a 
 
 Authenticated requests send `Authorization: Bearer <access-token>`. Access tokens last 15 minutes; refresh tokens last 30 days.
 
-Checkout requests contain the customer's Kenyan M-Pesa phone number plus product IDs and quantities. Product availability, price, and inventory are checked by the server:
+Checkout requests contain a payment method and product IDs and quantities. The M-Pesa option also requires the customer's Kenyan phone number; for backward compatibility, omitting `payment_method` selects M-Pesa:
 
 ```json
 {
+	"payment_method": "mpesa",
 	"phone_number": "+254712345678",
 	"items": [
 		{ "product_id": 1, "quantity": 2 }
@@ -67,7 +69,7 @@ Checkout requests contain the customer's Kenyan M-Pesa phone number plus product
 }
 ```
 
-The API reserves inventory while the Daraja STK Push is pending, marks an order paid only after a successful callback, and restores stock if payment fails. Daraja requires a whole-number KES total. The production catalog must contain active seller listings; the storefront's sample preview listings are not purchasable. Order fulfillment and shipping notifications still require a shipping workflow.
+To use Stripe card checkout, send `"payment_method": "stripe"` and omit `phone_number`. The API creates the Checkout Session from server-verified product prices, reserves inventory while payment is pending, marks the order paid only after a signed webhook confirms the amount and currency, and restores stock when payment fails or the session expires. Card charges settle to the platform's Stripe account; seller account routing and payouts are not automated by this integration. M-Pesa continues to use Daraja STK Push and its callback. Both methods require a whole-number KES total. The production catalog must contain active seller listings; the storefront's sample preview listings are not purchasable. Order fulfillment and shipping notifications still require a shipping workflow.
 
 ## Currency
 
@@ -94,10 +96,13 @@ MPESA_CONSUMER_SECRET=<Daraja sandbox consumer secret>
 MPESA_SHORTCODE=174379
 MPESA_PASSKEY=<Daraja sandbox passkey>
 MPESA_CALLBACK_URL=https://<your-api-vercel-domain>/api/payments/mpesa/callback/
+FRONTEND_URL=https://<your-storefront-vercel-domain>
+STRIPE_SECRET_KEY=<Stripe secret API key>
+STRIPE_WEBHOOK_SECRET=<Stripe webhook signing secret>
 ```
 
 The API requires a persistent PostgreSQL database; Vercel's function filesystem and process memory are not persistent. The API initializes the schema automatically.
-Use Daraja sandbox credentials and test numbers first. Set these variables in Vercel's API project environment settings; never commit them or paste them into chat. The callback URL must be a public HTTPS endpoint. Sandbox phone prompts and callbacks cannot reach a localhost-only backend.
+Use Daraja sandbox credentials and test numbers first. For Stripe, configure a webhook endpoint at `https://<your-api-vercel-domain>/api/payments/stripe/webhook/` for `checkout.session.completed`, `checkout.session.expired`, and `checkout.session.async_payment_failed`, then copy its signing secret to `STRIPE_WEBHOOK_SECRET`. Use Stripe test keys before switching to live keys. Stripe requires an account eligible to accept payments in the business's registered country. Set these variables in Vercel's API project environment settings; never commit them or paste them into chat. The M-Pesa callback URL and Stripe webhook URL must be public HTTPS endpoints. Sandbox callbacks cannot reach a localhost-only backend.
 
 ### Storefront project
 

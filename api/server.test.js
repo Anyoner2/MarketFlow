@@ -114,3 +114,25 @@ test('M-Pesa callback rejects malformed payloads before touching the database', 
   assert.equal(response.status, 400);
   assert.deepEqual(await response.json(), { detail: 'Invalid M-Pesa callback payload.' });
 });
+
+test('Stripe webhook rejects requests without a valid signature before touching the database', async () => {
+  const names = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'FRONTEND_URL'];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    process.env.STRIPE_SECRET_KEY = 'sk_test_marketflow';
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_marketflow';
+    process.env.FRONTEND_URL = 'http://localhost:5173';
+    const response = await fetch(`${baseUrl}/api/payments/stripe/webhook/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Stripe-Signature': 'invalid' },
+      body: JSON.stringify({ type: 'checkout.session.completed' }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { detail: 'Invalid Stripe webhook signature.' });
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
