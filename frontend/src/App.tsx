@@ -67,7 +67,7 @@ const previewProducts: Product[] = [
 
 const categories = ['All finds', 'Home', 'Accessories', 'Electric Appliances', 'Shoes', 'Watches', 'Bags', 'Belts', 'Laptops', 'Phones', 'Drawings', 'Paintings', 'Utensils', 'Sportswear', 'Sports Equipment']
 const previewCatalog = previewProducts.map((product) => ({ ...product, previewOnly: true }))
-const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend.vercel.app'
+const defaultApiBaseUrl = import.meta.env.DEV ? '' : 'https://market-flow-backend-5xfy8nxl8-donpapi.vercel.app'
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? defaultApiBaseUrl
 
 async function loadCatalog(): Promise<Product[]> {
